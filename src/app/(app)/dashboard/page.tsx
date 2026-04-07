@@ -13,17 +13,6 @@ import { getExpenseCatalogs } from '@/features/expenses/queries';
 import { requireAppContext } from '@/lib/app-access';
 import { formatCurrency } from '@/lib/utils';
 
-function currentMonthRange() {
-  const now = new Date();
-  const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
-
-  return {
-    from: first.toISOString().slice(0, 10),
-    to: last.toISOString().slice(0, 10)
-  };
-}
-
 export default async function DashboardPage() {
   const appContext = await requireAppContext();
   const [dashboard, catalogs] = await Promise.all([
@@ -35,10 +24,6 @@ export default async function DashboardPage() {
   ]);
 
   const canManage = ['admin', 'manager'].includes(appContext.membership.role);
-  const currentMonth = currentMonthRange();
-  const monthlyExpenseHref = `/gastos?from=${currentMonth.from}&to=${currentMonth.to}`;
-  const pendingInvoicesHref = '/facturas?status=open&period=all';
-  const overdueInvoicesHref = '/facturas?status=overdue&period=all';
 
   return (
     <div className="page-grid gap-5 xl:gap-6">
@@ -57,7 +42,7 @@ export default async function DashboardPage() {
           tone="info"
           badge="Actual"
           emphasis
-          href={monthlyExpenseHref}
+          href="/gastos"
         />
         <DashboardStatCard
           label="Facturas pendientes"
@@ -66,7 +51,7 @@ export default async function DashboardPage() {
           icon={Receipt}
           tone={dashboard.stats.pendingInvoices > 0 ? 'warning' : 'success'}
           badge={dashboard.stats.pendingInvoices > 0 ? 'Abiertas' : 'Limpio'}
-          href={pendingInvoicesHref}
+          href="/facturas?status=open&period=all"
         />
         <DashboardStatCard
           label="Facturas vencidas"
@@ -75,7 +60,7 @@ export default async function DashboardPage() {
           icon={TriangleAlert}
           tone={dashboard.stats.overdueInvoices > 0 ? 'danger' : 'success'}
           badge={dashboard.stats.overdueInvoices > 0 ? 'Atención' : 'Controlado'}
-          href={overdueInvoicesHref}
+          href="/facturas?status=overdue&period=all"
         />
         <DashboardStatCard
           label="Saldo disponible"

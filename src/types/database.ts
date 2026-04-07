@@ -302,6 +302,45 @@ export type Database = {
         };
         Relationships: [];
       };
+      purchase_invoice_installments: {
+        Row: {
+          id: string;
+          business_id: string;
+          invoice_id: string;
+          sequence_number: number;
+          due_date: string;
+          amount: string;
+          paid_amount: string;
+          status: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          business_id: string;
+          invoice_id: string;
+          sequence_number: number;
+          due_date: string;
+          amount: string;
+          paid_amount?: string;
+          status?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          business_id?: string;
+          invoice_id?: string;
+          sequence_number?: number;
+          due_date?: string;
+          amount?: string;
+          paid_amount?: string;
+          status?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       purchase_invoice_payments: {
         Row: {
           id: string;

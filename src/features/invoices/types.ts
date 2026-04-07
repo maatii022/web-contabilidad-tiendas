@@ -2,11 +2,23 @@ import type { Database } from '@/types/database';
 import type { AccountOption, VendorOption } from '@/features/expenses/types';
 
 export type InvoiceStatus = Database['public']['Enums']['invoice_status'];
+export type InvoiceInstallmentStatus = 'pending' | 'partially_paid' | 'paid' | 'overdue';
+export type InvoicePlan = 'single' | '30' | '30/60' | '30/60/90' | '30/60/90/120' | 'custom';
 
 export type InvoiceAttachmentItem = {
   id: string;
   fileName: string;
   url: string | null;
+};
+
+export type InvoiceInstallmentItem = {
+  id: string;
+  sequenceNumber: number;
+  dueDate: string;
+  amount: number;
+  paidAmount: number;
+  pendingAmount: number;
+  status: InvoiceInstallmentStatus;
 };
 
 export type InvoicePaymentItem = {
@@ -38,6 +50,8 @@ export type InvoiceListItem = {
   createdAt: string;
   attachmentCount: number;
   attachments: InvoiceAttachmentItem[];
+  installments: InvoiceInstallmentItem[];
+  nextDueDate: string;
   payments: InvoicePaymentItem[];
 };
 
@@ -47,6 +61,8 @@ export type InvoiceFilters = {
   vendorId: string;
   dueFrom: string;
   dueTo: string;
+  period: 'current-month' | 'all';
+  highlightedInvoiceId: string;
 };
 
 export type InvoiceCatalogs = {
@@ -80,4 +96,13 @@ export const invoiceStatusOptions: Array<{ value: InvoiceStatus; label: string }
   { value: 'partially_paid', label: 'Parcial' },
   { value: 'paid', label: 'Pagada' },
   { value: 'cancelled', label: 'Anulada' }
+];
+
+export const invoicePlanOptions: Array<{ value: InvoicePlan; label: string; parts: number }> = [
+  { value: 'single', label: 'Pago único', parts: 1 },
+  { value: '30', label: '30 días', parts: 1 },
+  { value: '30/60', label: '30 / 60', parts: 2 },
+  { value: '30/60/90', label: '30 / 60 / 90', parts: 3 },
+  { value: '30/60/90/120', label: '30 / 60 / 90 / 120', parts: 4 },
+  { value: 'custom', label: 'Personalizado', parts: 0 }
 ];

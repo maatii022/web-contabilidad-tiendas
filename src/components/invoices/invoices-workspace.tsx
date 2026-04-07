@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarClock, CreditCard, FileText, Pencil, Plus, ReceiptText, Search, Trash2 } from 'lucide-react';
 
 import { InvoicePaymentSheet } from '@/components/forms/invoice-payment-sheet';
@@ -8,9 +8,9 @@ import { InvoiceSheet } from '@/components/forms/invoice-sheet';
 import { StatusPill } from '@/components/dashboard/status-pill';
 import { Button, buttonClassName } from '@/components/ui/button';
 import { deleteInvoiceAction, deleteInvoicePaymentAction } from '@/features/invoices/actions';
-import type { InvoiceCatalogs, InvoiceFilters, InvoiceListItem, InvoiceStatus } from '@/features/invoices/types';
+import type { InvoiceCatalogs, InvoiceFilters, InvoiceInstallmentItem, InvoiceListItem, InvoiceStatus } from '@/features/invoices/types';
 import { paymentMethodLabel } from '@/features/expenses/helpers';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { cn, formatCurrency, formatDate } from '@/lib/utils';
 
 const statusToneMap: Record<InvoiceStatus, 'success' | 'warning' | 'danger' | 'neutral' | 'info'> = {
   pending: 'warning',
@@ -24,6 +24,20 @@ const statusLabelMap: Record<InvoiceStatus, string> = {
   partially_paid: 'Parcial',
   paid: 'Pagada',
   cancelled: 'Anulada'
+};
+
+const installmentToneMap: Record<InvoiceInstallmentItem['status'], 'success' | 'warning' | 'danger' | 'info'> = {
+  pending: 'warning',
+  partially_paid: 'info',
+  paid: 'success',
+  overdue: 'danger'
+};
+
+const installmentLabelMap: Record<InvoiceInstallmentItem['status'], string> = {
+  pending: 'Pendiente',
+  partially_paid: 'Parcial',
+  paid: 'Pagado',
+  overdue: 'Vencido'
 };
 
 export function InvoicesWorkspace({
@@ -42,6 +56,12 @@ export function InvoicesWorkspace({
   const [createOpen, setCreateOpen] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<InvoiceListItem | null>(null);
   const [paymentInvoice, setPaymentInvoice] = useState<InvoiceListItem | null>(null);
+  const highlightedRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!filters.highlightedInvoiceId || !highlightedRef.current) return;
+    highlightedRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [filters.highlightedInvoiceId]);
 
   const totals = useMemo(() => {
     return records.reduce(
@@ -71,7 +91,8 @@ export function InvoicesWorkspace({
         </div>
 
         <form className="mt-5 grid gap-4" method="get">
-          <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-[minmax(0,1.5fr)_190px_220px_170px_170px]">
+          <input type="hidden" name="period" value={filters.period} />
+          <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-[minmax(0,1.5fr)_220px_220px_170px_170px]">
             <label className="grid gap-2 text-sm text-[var(--foreground-soft)]">
               <span className="font-medium text-[var(--foreground)]">Buscar</span>
               <div className="relative">
@@ -95,8 +116,6 @@ export function InvoicesWorkspace({
                 <option value="">Todos</option>
                 <option value="open">Pendientes y parciales</option>
                 <option value="overdue">Vencidas</option>
-                <option value="pending">Pendientes</option>
-                <option value="partially_paid">Parciales</option>
                 <option value="paid">Pagadas</option>
                 <option value="cancelled">Anuladas</option>
               </select>
@@ -140,7 +159,14 @@ export function InvoicesWorkspace({
           </div>
 
           <div className="flex flex-col gap-3 border-t border-[rgba(123,136,95,0.12)] pt-4 md:flex-row md:items-center md:justify-between">
-            <p className="text-sm text-[var(--foreground-soft)]">Al entrar ves el mes actual, pero puedes revisar cualquier ventana de vencimientos.</p>
+            <div className="flex flex-wrap items-center gap-2 text-sm text-[var(--foreground-soft)]">
+              <a className={buttonClassName(filters.period === 'current-month' ? 'secondary' : 'ghost')} href="/facturas">
+                Mes actual
+              </a>
+              <a className={buttonClassName(filters.period === 'all' ? 'secondary' : 'ghost')} href="/facturas?period=all">
+                Todo
+              </a>
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               <button className={buttonClassName('secondary')} type="submit">Aplicar</button>
               <a className={buttonClassName('ghost')} href="/facturas">Limpiar</a>
@@ -185,9 +211,17 @@ export function InvoicesWorkspace({
           <div className="grid gap-3">
             {records.map((invoice) => {
               const progress = invoice.total > 0 ? Math.min((invoice.paidAmount / invoice.total) * 100, 100) : 0;
+              const isHighlighted = invoice.id === filters.highlightedInvoiceId;
 
               return (
-                <article key={invoice.id} className="dashboard-row rounded-[26px] border border-[rgba(123,136,95,0.12)] bg-white/84 p-4 shadow-[0_14px_24px_rgba(60,70,49,0.05)] md:p-5">
+                <article
+                  key={invoice.id}
+                  ref={isHighlighted ? highlightedRef : null}
+                  className={cn(
+                    'dashboard-row rounded-[26px] border border-[rgba(123,136,95,0.12)] bg-white/84 p-4 shadow-[0_14px_24px_rgba(60,70,49,0.05)] md:p-5',
+                    isHighlighted && 'ring-2 ring-[rgba(110,127,86,0.28)]'
+                  )}
+                >
                   <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                     <div className="grid gap-3">
                       <div className="flex flex-wrap items-center gap-2">
@@ -196,7 +230,7 @@ export function InvoicesWorkspace({
                         <span className="text-sm text-[var(--foreground-soft)]">· {invoice.invoiceNumber}</span>
                       </div>
                       <div>
-                        <h3 className="text-lg font-semibold text-[var(--foreground)]">Vence el {formatDate(invoice.dueDate)}</h3>
+                        <h3 className="text-lg font-semibold text-[var(--foreground)]">Próximo vencimiento {formatDate(invoice.nextDueDate)}</h3>
                         <p className="mt-1 text-sm text-[var(--foreground-soft)]">Emitida el {formatDate(invoice.issueDate)} · Total {formatCurrency(invoice.total, currency)}</p>
                       </div>
                       <div className="max-w-xl space-y-2">
@@ -235,10 +269,27 @@ export function InvoicesWorkspace({
                     </div>
                   </div>
 
-                  <div className="mt-5 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
+                  <div className="mt-5 grid gap-3 xl:grid-cols-[minmax(0,1.15fr)_minmax(280px,360px)]">
                     <div className="rounded-[22px] border border-[rgba(123,136,95,0.12)] bg-[rgba(255,255,255,0.66)] p-4 shadow-[0_10px_18px_rgba(60,70,49,0.03)]">
                       <div className="flex items-center gap-2 text-sm font-medium text-[var(--foreground)]">
-                        <CalendarClock className="h-4 w-4 text-[var(--accent-strong)]" />Pagos registrados
+                        <CalendarClock className="h-4 w-4 text-[var(--accent-strong)]" />Vencimientos
+                      </div>
+                      <div className="mt-3 grid gap-2">
+                        {invoice.installments.map((installment) => (
+                          <div key={installment.id} className="flex flex-wrap items-center justify-between gap-3 rounded-[18px] border border-[rgba(123,136,95,0.12)] bg-white/82 px-3 py-3">
+                            <div>
+                              <p className="text-sm font-semibold text-[var(--foreground)]">Pago {installment.sequenceNumber} · {formatDate(installment.dueDate)}</p>
+                              <p className="mt-1 text-sm text-[var(--foreground-soft)]">{formatCurrency(installment.pendingAmount, currency)} pendiente de {formatCurrency(installment.amount, currency)}</p>
+                            </div>
+                            <StatusPill label={installmentLabelMap[installment.status]} tone={installmentToneMap[installment.status]} />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="rounded-[22px] border border-[rgba(123,136,95,0.12)] bg-[rgba(255,255,255,0.66)] p-4 shadow-[0_10px_18px_rgba(60,70,49,0.03)]">
+                      <div className="flex items-center gap-2 text-sm font-medium text-[var(--foreground)]">
+                        <ReceiptText className="h-4 w-4 text-[var(--accent-strong)]" />Pagos y documentación
                       </div>
                       {invoice.payments.length === 0 ? (
                         <p className="mt-3 text-sm text-[var(--foreground-soft)]">Aún no hay pagos en esta factura.</p>
@@ -267,16 +318,10 @@ export function InvoicesWorkspace({
                           ))}
                         </div>
                       )}
-                    </div>
-
-                    <div className="rounded-[22px] border border-[rgba(123,136,95,0.12)] bg-[rgba(255,255,255,0.66)] p-4 shadow-[0_10px_18px_rgba(60,70,49,0.03)]">
-                      <div className="flex items-center gap-2 text-sm font-medium text-[var(--foreground)]">
-                        <ReceiptText className="h-4 w-4 text-[var(--accent-strong)]" />Documentación
-                      </div>
                       {invoice.attachments.length === 0 ? (
-                        <p className="mt-3 text-sm text-[var(--foreground-soft)]">Sin adjuntos cargados.</p>
+                        <p className="mt-4 text-sm text-[var(--foreground-soft)]">Sin adjuntos cargados.</p>
                       ) : (
-                        <div className="mt-3 grid gap-2">
+                        <div className="mt-4 grid gap-2">
                           {invoice.attachments.map((attachment) => (
                             <a key={attachment.id} href={attachment.url ?? '#'} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm font-medium text-[var(--accent-strong)] underline-offset-4 hover:underline">
                               <FileText className="h-4 w-4" />{attachment.fileName}

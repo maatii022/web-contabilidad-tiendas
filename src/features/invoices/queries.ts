@@ -3,7 +3,7 @@ import 'server-only';
 import { createClient } from '@/lib/supabase/server';
 import { parseMoney } from '@/features/expenses/helpers';
 import type { Database } from '@/types/database';
-import type { InvoiceCatalogs, InvoiceFilters, InvoiceListItem, InvoiceStatus } from '@/features/invoices/types';
+import type { InvoiceCatalogs, InvoiceFilters, InvoiceInstallmentItem, InvoiceListItem, InvoiceStatus } from '@/features/invoices/types';
 
 type VendorRow = Pick<Database['public']['Tables']['vendors']['Row'], 'id' | 'name'>;
 type AccountRow = Pick<Database['public']['Tables']['accounts']['Row'], 'id' | 'name' | 'type'>;
@@ -19,6 +19,7 @@ type AttachmentRow = Pick<
   Database['public']['Tables']['attachments']['Row'],
   'id' | 'entity_id' | 'file_name' | 'storage_path'
 >;
+type InstallmentRow = Database['public']['Tables']['purchase_invoice_installments']['Row'];
 
 function normalizeFilter(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] ?? '' : value ?? '';
@@ -45,17 +46,19 @@ function currentMonthRange() {
 
 export function getInvoiceFilters(searchParams?: Record<string, string | string[] | undefined>): InvoiceFilters {
   const defaults = currentMonthRange();
+  const rawPeriod = normalizeFilter(searchParams?.period);
+  const period = rawPeriod === 'all' ? 'all' : 'current-month';
   const rawFrom = normalizeFilter(searchParams?.from);
   const rawTo = normalizeFilter(searchParams?.to);
-  const period = normalizeFilter(searchParams?.period);
-  const useAllPeriod = period === 'all';
 
   return {
     query: normalizeFilter(searchParams?.q).trim(),
     status: normalizeFilter(searchParams?.status),
     vendorId: normalizeFilter(searchParams?.vendor),
-    dueFrom: useAllPeriod ? rawFrom : rawFrom || defaults.from,
-    dueTo: useAllPeriod ? rawTo : rawTo || defaults.to
+    dueFrom: period === 'all' ? rawFrom : rawFrom || defaults.from,
+    dueTo: period === 'all' ? rawTo : rawTo || defaults.to,
+    period,
+    highlightedInvoiceId: normalizeFilter(searchParams?.invoice)
   };
 }
 
@@ -92,29 +95,15 @@ export async function getInvoiceList({
     .from('purchase_invoices')
     .select('id, vendor_id, invoice_number, issue_date, due_date, subtotal, tax_amount, total, status, notes, attachment_count, created_at')
     .eq('business_id', businessId)
-    .order('due_date', { ascending: true })
     .order('created_at', { ascending: false })
     .limit(100);
-
-  if (filters.status === 'open') {
-    query = query.in('status', ['pending', 'partially_paid']);
-  } else if (filters.status === 'overdue') {
-    const today = new Date().toISOString().slice(0, 10);
-    query = query.lt('due_date', today).in('status', ['pending', 'partially_paid']);
-  } else if (filters.status) {
-    query = query.eq('status', filters.status as InvoiceStatus);
-  }
 
   if (filters.vendorId) {
     query = query.eq('vendor_id', filters.vendorId);
   }
 
-  if (filters.dueFrom) {
-    query = query.gte('due_date', filters.dueFrom);
-  }
-
-  if (filters.dueTo) {
-    query = query.lte('due_date', filters.dueTo);
+  if (filters.status && !['open', 'overdue'].includes(filters.status)) {
+    query = query.eq('status', filters.status as InvoiceStatus);
   }
 
   const { data: invoicesData } = await query;
@@ -123,7 +112,7 @@ export async function getInvoiceList({
   const vendorIds = [...new Set(items.map((item) => item.vendor_id))];
   const invoiceIds = items.map((item) => item.id);
 
-  const [vendorsResult, attachmentsResult, paymentsResult] = await Promise.all([
+  const [vendorsResult, attachmentsResult, paymentsResult, installmentsResult] = await Promise.all([
     vendorIds.length > 0 ? supabase.from('vendors').select('id, name').in('id', vendorIds) : Promise.resolve({ data: [] as VendorRow[] }),
     invoiceIds.length > 0
       ? supabase
@@ -142,7 +131,15 @@ export async function getInvoiceList({
           .in('invoice_id', invoiceIds)
           .order('payment_date', { ascending: false })
           .order('created_at', { ascending: false })
-      : Promise.resolve({ data: [] as PaymentRow[] })
+      : Promise.resolve({ data: [] as PaymentRow[] }),
+    invoiceIds.length > 0
+      ? supabase
+          .from('purchase_invoice_installments')
+          .select('id, business_id, invoice_id, sequence_number, due_date, amount, paid_amount, status, created_at, updated_at')
+          .eq('business_id', businessId)
+          .in('invoice_id', invoiceIds)
+          .order('sequence_number', { ascending: true })
+      : Promise.resolve({ data: [] as InstallmentRow[] })
   ]);
 
   const vendorMap = new Map(((vendorsResult.data ?? []) as VendorRow[]).map((item) => [item.id, item.name]));
@@ -202,9 +199,30 @@ export async function getInvoiceList({
     paidAmountMap.set(payment.invoice_id, (paidAmountMap.get(payment.invoice_id) ?? 0) + amount);
   }
 
+  const installmentsByInvoice = new Map<string, InvoiceInstallmentItem[]>();
+  const installmentRows = (installmentsResult.data ?? []) as InstallmentRow[];
+
+  for (const installment of installmentRows) {
+    const current = installmentsByInvoice.get(installment.invoice_id) ?? [];
+    const amount = parseMoney(installment.amount);
+    const paidAmount = parseMoney(installment.paid_amount);
+    current.push({
+      id: installment.id,
+      sequenceNumber: installment.sequence_number,
+      dueDate: installment.due_date,
+      amount,
+      paidAmount,
+      pendingAmount: Math.max(amount - paidAmount, 0),
+      status: installment.status as InvoiceInstallmentItem['status']
+    });
+    installmentsByInvoice.set(installment.invoice_id, current);
+  }
+
   let rows: InvoiceListItem[] = items.map((item) => {
     const total = parseMoney(item.total);
     const paidAmount = paidAmountMap.get(item.id) ?? 0;
+    const installments = installmentsByInvoice.get(item.id) ?? [];
+    const nextInstallment = installments.find((installment) => installment.status !== 'paid') ?? installments[0] ?? null;
 
     return {
       id: item.id,
@@ -212,7 +230,8 @@ export async function getInvoiceList({
       vendorName: vendorMap.get(item.vendor_id) ?? 'Proveedor sin nombre',
       invoiceNumber: item.invoice_number,
       issueDate: item.issue_date,
-      dueDate: item.due_date,
+      dueDate: nextInstallment?.dueDate ?? item.due_date,
+      nextDueDate: nextInstallment?.dueDate ?? item.due_date,
       subtotal: parseMoney(item.subtotal),
       taxAmount: parseMoney(item.tax_amount),
       total,
@@ -223,9 +242,38 @@ export async function getInvoiceList({
       createdAt: item.created_at,
       attachmentCount: item.attachment_count,
       attachments: attachmentsByInvoice.get(item.id) ?? [],
+      installments,
       payments: paymentsByInvoice.get(item.id) ?? []
     };
   });
+
+  if (filters.period !== 'all' && (filters.dueFrom || filters.dueTo)) {
+    rows = rows.filter((row) => {
+      const dueDates = row.installments.length > 0 ? row.installments.map((installment) => installment.dueDate) : [row.nextDueDate];
+      return dueDates.some((dueDate) => {
+        if (filters.dueFrom && dueDate < filters.dueFrom) return false;
+        if (filters.dueTo && dueDate > filters.dueTo) return false;
+        return true;
+      });
+    });
+  } else if (filters.period === 'all' && (filters.dueFrom || filters.dueTo)) {
+    rows = rows.filter((row) => {
+      const dueDates = row.installments.length > 0 ? row.installments.map((installment) => installment.dueDate) : [row.nextDueDate];
+      return dueDates.some((dueDate) => {
+        if (filters.dueFrom && dueDate < filters.dueFrom) return false;
+        if (filters.dueTo && dueDate > filters.dueTo) return false;
+        return true;
+      });
+    });
+  }
+
+  if (filters.status === 'open') {
+    rows = rows.filter((row) => ['pending', 'partially_paid'].includes(row.status));
+  }
+
+  if (filters.status === 'overdue') {
+    rows = rows.filter((row) => row.installments.some((installment) => installment.status === 'overdue'));
+  }
 
   const textQuery = filters.query.trim().toLocaleLowerCase('es-ES');
 
@@ -239,6 +287,8 @@ export async function getInvoiceList({
       );
     });
   }
+
+  rows.sort((left, right) => left.nextDueDate.localeCompare(right.nextDueDate));
 
   return rows;
 }

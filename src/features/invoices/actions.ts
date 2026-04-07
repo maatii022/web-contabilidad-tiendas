@@ -2,7 +2,7 @@
 
 import { z } from 'zod';
 
-import { getFileEntry, getOptionalTextEntry, getTextEntry, toDecimalString } from '@/features/expenses/helpers';
+import { getFileEntry, getOptionalTextEntry, getTextEntry, parseMoney, toDecimalString } from '@/features/expenses/helpers';
 import type { InvoiceFormState, InvoicePaymentFormState } from '@/features/invoices/types';
 import { deleteEntityAttachments, ensureVendor, getReturnPath, refreshCorePaths, requireManageContext, uploadAttachment } from '@/features/operations/shared';
 import { createClient } from '@/lib/supabase/server';
@@ -14,9 +14,7 @@ const invoiceSchema = z.object({
   vendorName: z.string().min(1, 'Selecciona un proveedor.').max(120, 'Proveedor demasiado largo.'),
   invoiceNumber: z.string().min(1, 'Indica el número de factura.').max(80, 'Número demasiado largo.'),
   issueDate: z.string().min(1, 'Indica la fecha de emisión.'),
-  dueDate: z.string().min(1, 'Indica el vencimiento.'),
-  subtotal: z.coerce.number().min(0, 'La base debe ser positiva.'),
-  taxAmount: z.coerce.number().min(0, 'El impuesto debe ser positivo.'),
+  total: z.coerce.number().positive('El total debe ser mayor que cero.'),
   notes: z.string().max(800, 'Las notas son demasiado largas.').optional().or(z.literal(''))
 });
 
@@ -40,6 +38,19 @@ function buildFieldErrors(error: z.ZodError) {
   }, {});
 }
 
+function parseInstallments(formData: FormData) {
+  const dueDates = formData.getAll('installmentDueDate').map((value) => (typeof value === 'string' ? value.trim() : ''));
+  const amounts = formData.getAll('installmentAmount').map((value) => parseMoney(typeof value === 'string' ? value : '0'));
+
+  const rows = dueDates.map((dueDate, index) => ({
+    sequenceNumber: index + 1,
+    dueDate,
+    amount: amounts[index] ?? 0
+  }));
+
+  return rows.filter((row) => row.dueDate || row.amount > 0);
+}
+
 export async function upsertInvoiceAction(
   _prevState: InvoiceFormState,
   formData: FormData
@@ -55,9 +66,7 @@ export async function upsertInvoiceAction(
       vendorName: getTextEntry(formData, 'vendorName'),
       invoiceNumber: getTextEntry(formData, 'invoiceNumber'),
       issueDate: getTextEntry(formData, 'issueDate'),
-      dueDate: getTextEntry(formData, 'dueDate'),
-      subtotal: getTextEntry(formData, 'subtotal'),
-      taxAmount: getTextEntry(formData, 'taxAmount'),
+      total: getTextEntry(formData, 'total'),
       notes: getTextEntry(formData, 'notes')
     });
 
@@ -70,13 +79,48 @@ export async function upsertInvoiceAction(
     }
 
     const values = parsed.data;
+    const installments = parseInstallments(formData);
 
-    if (values.dueDate < values.issueDate) {
+    if (installments.length === 0) {
       return {
         status: 'error',
-        message: 'Revisa los campos marcados.',
+        message: 'Añade al menos un vencimiento.',
         fieldErrors: {
-          dueDate: 'El vencimiento no puede ser anterior a la emisión.'
+          installments: 'Necesitas al menos un vencimiento.'
+        }
+      };
+    }
+
+    for (const installment of installments) {
+      if (!installment.dueDate) {
+        return {
+          status: 'error',
+          message: 'Revisa los vencimientos.',
+          fieldErrors: {
+            installments: 'Cada vencimiento debe tener fecha.'
+          }
+        };
+      }
+
+      if (installment.dueDate < values.issueDate) {
+        return {
+          status: 'error',
+          message: 'Revisa los vencimientos.',
+          fieldErrors: {
+            installments: 'No puede haber vencimientos antes de la emisión.'
+          }
+        };
+      }
+    }
+
+    const scheduleTotal = Number(installments.reduce((sum, installment) => sum + installment.amount, 0).toFixed(2));
+
+    if (Math.abs(scheduleTotal - values.total) > 0.01) {
+      return {
+        status: 'error',
+        message: 'La suma de vencimientos no cuadra con el total.',
+        fieldErrors: {
+          installments: 'La suma de vencimientos debe coincidir con el total.'
         }
       };
     }
@@ -96,14 +140,36 @@ export async function upsertInvoiceAction(
       };
     }
 
+    if (values.invoiceId) {
+      const { data: paymentRows } = await supabase
+        .from('purchase_invoice_payments')
+        .select('amount')
+        .eq('business_id', appContext.business.id)
+        .eq('invoice_id', values.invoiceId);
+
+      const currentPaid = (paymentRows ?? []).reduce((sum, payment) => sum + parseMoney(payment.amount), 0);
+
+      if (currentPaid > values.total + 0.009) {
+        return {
+          status: 'error',
+          message: 'El total es menor que lo ya pagado.',
+          fieldErrors: {
+            total: 'No puede ser inferior a los pagos ya registrados.'
+          }
+        };
+      }
+    }
+
+    const firstDueDate = installments.slice().sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0]?.dueDate ?? values.issueDate;
+
     const payload = {
       business_id: appContext.business.id,
       vendor_id: vendorId,
       invoice_number: values.invoiceNumber,
       issue_date: values.issueDate,
-      due_date: values.dueDate,
-      subtotal: toDecimalString(values.subtotal),
-      tax_amount: toDecimalString(values.taxAmount),
+      due_date: firstDueDate,
+      subtotal: toDecimalString(values.total),
+      tax_amount: toDecimalString(0),
       notes: getOptionalTextEntry(formData, 'notes'),
       created_by: appContext.user.id
     };
@@ -125,6 +191,19 @@ export async function upsertInvoiceAction(
       }
 
       persistedInvoiceId = values.invoiceId;
+
+      const { error: deleteInstallmentsError } = await supabase
+        .from('purchase_invoice_installments')
+        .delete()
+        .eq('business_id', appContext.business.id)
+        .eq('invoice_id', persistedInvoiceId);
+
+      if (deleteInstallmentsError) {
+        return {
+          status: 'error',
+          message: 'No se pudo actualizar el calendario de vencimientos.'
+        };
+      }
     } else {
       const { data, error } = await supabase
         .from('purchase_invoices')
@@ -141,6 +220,27 @@ export async function upsertInvoiceAction(
 
       persistedInvoiceId = data.id;
     }
+
+    const installmentPayload = installments.map((installment) => ({
+      business_id: appContext.business.id,
+      invoice_id: persistedInvoiceId,
+      sequence_number: installment.sequenceNumber,
+      due_date: installment.dueDate,
+      amount: toDecimalString(installment.amount)
+    }));
+
+    const { error: installmentsError } = await supabase.from('purchase_invoice_installments').insert(installmentPayload);
+
+    if (installmentsError) {
+      return {
+        status: 'error',
+        message: 'No se pudieron guardar los vencimientos.'
+      };
+    }
+
+    await supabase.rpc('refresh_purchase_invoice_schedule', {
+      p_invoice_id: persistedInvoiceId
+    });
 
     if (attachment && persistedInvoiceId) {
       await uploadAttachment({
