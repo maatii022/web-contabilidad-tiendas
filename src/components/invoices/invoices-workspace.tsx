@@ -93,6 +93,8 @@ export function InvoicesWorkspace({
                 className="h-11 rounded-2xl border border-[rgba(123,136,95,0.16)] bg-white/88 px-4 text-sm text-[var(--foreground)]"
               >
                 <option value="">Todos</option>
+                <option value="open">Pendientes y parciales</option>
+                <option value="overdue">Vencidas</option>
                 <option value="pending">Pendientes</option>
                 <option value="partially_paid">Parciales</option>
                 <option value="paid">Pagadas</option>

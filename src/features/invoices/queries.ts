@@ -47,13 +47,15 @@ export function getInvoiceFilters(searchParams?: Record<string, string | string[
   const defaults = currentMonthRange();
   const rawFrom = normalizeFilter(searchParams?.from);
   const rawTo = normalizeFilter(searchParams?.to);
+  const period = normalizeFilter(searchParams?.period);
+  const useAllPeriod = period === 'all';
 
   return {
     query: normalizeFilter(searchParams?.q).trim(),
     status: normalizeFilter(searchParams?.status),
     vendorId: normalizeFilter(searchParams?.vendor),
-    dueFrom: rawFrom || defaults.from,
-    dueTo: rawTo || defaults.to
+    dueFrom: useAllPeriod ? rawFrom : rawFrom || defaults.from,
+    dueTo: useAllPeriod ? rawTo : rawTo || defaults.to
   };
 }
 
@@ -94,7 +96,12 @@ export async function getInvoiceList({
     .order('created_at', { ascending: false })
     .limit(100);
 
-  if (filters.status) {
+  if (filters.status === 'open') {
+    query = query.in('status', ['pending', 'partially_paid']);
+  } else if (filters.status === 'overdue') {
+    const today = new Date().toISOString().slice(0, 10);
+    query = query.lt('due_date', today).in('status', ['pending', 'partially_paid']);
+  } else if (filters.status) {
     query = query.eq('status', filters.status as InvoiceStatus);
   }
 

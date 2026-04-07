@@ -1,4 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
+import Link from 'next/link';
 
 import { StatusPill, type StatusPillTone } from '@/components/dashboard/status-pill';
 import { SectionCard } from '@/components/ui/section-card';
@@ -11,7 +12,8 @@ export function DashboardStatCard({
   icon: Icon,
   tone = 'neutral',
   badge,
-  emphasis = false
+  emphasis = false,
+  href
 }: {
   label: string;
   value: string;
@@ -20,12 +22,14 @@ export function DashboardStatCard({
   tone?: StatusPillTone;
   badge?: string;
   emphasis?: boolean;
+  href?: string;
 }) {
-  return (
+  const card = (
     <SectionCard
       className={cn(
-        'dashboard-surface relative min-h-[164px] overflow-hidden p-5 md:p-6',
-        emphasis && 'metric-glow shadow-[0_24px_44px_rgba(83,99,65,0.14)]'
+        'dashboard-surface relative min-h-[164px] overflow-hidden p-5 transition-all duration-200 md:p-6',
+        emphasis && 'metric-glow shadow-[0_24px_44px_rgba(83,99,65,0.14)]',
+        href && 'cursor-pointer hover:-translate-y-0.5 hover:border-[rgba(110,127,86,0.24)] hover:shadow-[0_20px_38px_rgba(60,70,49,0.08)] focus-within:-translate-y-0.5 focus-within:border-[rgba(110,127,86,0.24)] focus-within:shadow-[0_20px_38px_rgba(60,70,49,0.08)]'
       )}
     >
       <div className="flex items-start justify-between gap-4">
@@ -40,5 +44,15 @@ export function DashboardStatCard({
       <div className="mt-5 flex items-center gap-2">{badge ? <StatusPill label={badge} tone={tone} /> : null}</div>
       <p className="mt-3 text-sm leading-6 text-[var(--foreground-soft)]">{helper}</p>
     </SectionCard>
+  );
+
+  if (!href) {
+    return card;
+  }
+
+  return (
+    <Link href={href} className="block rounded-[var(--radius-xl)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(110,127,86,0.45)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface-page)]">
+      {card}
+    </Link>
   );
 }
