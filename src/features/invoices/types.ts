@@ -33,6 +33,8 @@ export type InvoicePaymentItem = {
   createdAt: string;
 };
 
+export type InvoicePaymentSheetMode = 'create' | 'edit';
+
 export type InvoiceListItem = {
   id: string;
   vendorId: string;

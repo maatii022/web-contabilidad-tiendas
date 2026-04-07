@@ -1,14 +1,21 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarClock, CreditCard, FileText, Pencil, Plus, ReceiptText, Search, Trash2 } from 'lucide-react';
+import { CalendarClock, CheckCircle2, FileText, Pencil, Plus, ReceiptText, Search, Trash2 } from 'lucide-react';
 
 import { InvoicePaymentSheet } from '@/components/forms/invoice-payment-sheet';
 import { InvoiceSheet } from '@/components/forms/invoice-sheet';
 import { StatusPill } from '@/components/dashboard/status-pill';
 import { Button, buttonClassName } from '@/components/ui/button';
-import { deleteInvoiceAction, deleteInvoicePaymentAction } from '@/features/invoices/actions';
-import type { InvoiceCatalogs, InvoiceFilters, InvoiceInstallmentItem, InvoiceListItem, InvoiceStatus } from '@/features/invoices/types';
+import { deleteInvoiceAction, deleteInvoicePaymentAction, quickSettleInvoiceAction } from '@/features/invoices/actions';
+import type {
+  InvoiceCatalogs,
+  InvoiceFilters,
+  InvoiceInstallmentItem,
+  InvoiceListItem,
+  InvoicePaymentItem,
+  InvoiceStatus
+} from '@/features/invoices/types';
 import { paymentMethodLabel } from '@/features/expenses/helpers';
 import { cn, formatCurrency, formatDate } from '@/lib/utils';
 
@@ -40,6 +47,44 @@ const installmentLabelMap: Record<InvoiceInstallmentItem['status'], string> = {
   overdue: 'Vencido'
 };
 
+type PaymentEditorState = {
+  invoice: InvoiceListItem;
+  payment: InvoicePaymentItem | null;
+  installment: InvoiceInstallmentItem | null;
+  mode: 'create' | 'edit';
+} | null;
+
+function buildInstallmentPaymentMap(invoice: InvoiceListItem) {
+  const payments = [...invoice.payments]
+    .sort((left, right) => left.paymentDate.localeCompare(right.paymentDate) || left.createdAt.localeCompare(right.createdAt))
+    .map((payment) => ({ ...payment, remaining: payment.amount }));
+
+  const map = new Map<string, { paymentId: string | null; payment: InvoicePaymentItem | null }>();
+
+  for (const installment of [...invoice.installments].sort((left, right) => left.sequenceNumber - right.sequenceNumber)) {
+    let remainingForInstallment = installment.paidAmount;
+    let linkedPayment: InvoicePaymentItem | null = null;
+
+    for (const payment of payments) {
+      if (remainingForInstallment <= 0) break;
+      if (payment.remaining <= 0) continue;
+      const applied = Math.min(payment.remaining, remainingForInstallment);
+      if (applied > 0) {
+        payment.remaining -= applied;
+        remainingForInstallment -= applied;
+        linkedPayment = payment;
+      }
+    }
+
+    map.set(installment.id, {
+      paymentId: linkedPayment?.id ?? null,
+      payment: linkedPayment ?? null
+    });
+  }
+
+  return map;
+}
+
 export function InvoicesWorkspace({
   records,
   catalogs,
@@ -55,7 +100,7 @@ export function InvoicesWorkspace({
 }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<InvoiceListItem | null>(null);
-  const [paymentInvoice, setPaymentInvoice] = useState<InvoiceListItem | null>(null);
+  const [paymentEditor, setPaymentEditor] = useState<PaymentEditorState>(null);
   const highlightedRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -139,22 +184,12 @@ export function InvoicesWorkspace({
 
             <label className="grid gap-2 text-sm text-[var(--foreground-soft)]">
               <span className="font-medium text-[var(--foreground)]">Desde</span>
-              <input
-                type="date"
-                name="from"
-                defaultValue={filters.dueFrom}
-                className="h-11 rounded-2xl border border-[rgba(123,136,95,0.16)] bg-white/88 px-4 text-sm text-[var(--foreground)]"
-              />
+              <input type="date" name="from" defaultValue={filters.dueFrom} className="h-11 rounded-2xl border border-[rgba(123,136,95,0.16)] bg-white/88 px-4 text-sm text-[var(--foreground)]" />
             </label>
 
             <label className="grid gap-2 text-sm text-[var(--foreground-soft)]">
               <span className="font-medium text-[var(--foreground)]">Hasta</span>
-              <input
-                type="date"
-                name="to"
-                defaultValue={filters.dueTo}
-                className="h-11 rounded-2xl border border-[rgba(123,136,95,0.16)] bg-white/88 px-4 text-sm text-[var(--foreground)]"
-              />
+              <input type="date" name="to" defaultValue={filters.dueTo} className="h-11 rounded-2xl border border-[rgba(123,136,95,0.16)] bg-white/88 px-4 text-sm text-[var(--foreground)]" />
             </label>
           </div>
 
@@ -212,6 +247,8 @@ export function InvoicesWorkspace({
             {records.map((invoice) => {
               const progress = invoice.total > 0 ? Math.min((invoice.paidAmount / invoice.total) * 100, 100) : 0;
               const isHighlighted = invoice.id === filters.highlightedInvoiceId;
+              const installmentPaymentMap = buildInstallmentPaymentMap(invoice);
+              const singleInstallment = invoice.installments.length === 1 ? invoice.installments[0] : null;
 
               return (
                 <article
@@ -249,10 +286,15 @@ export function InvoicesWorkspace({
                       <p className="text-2xl font-semibold tracking-[-0.04em] text-[var(--foreground)]">{formatCurrency(invoice.pendingAmount, currency)}</p>
                       {canManage ? (
                         <div className="flex flex-wrap items-center gap-2">
-                          {invoice.status !== 'paid' && invoice.status !== 'cancelled' ? (
-                            <Button variant="primary" onClick={() => setPaymentInvoice(invoice)}>
-                              <CreditCard className="mr-2 h-4 w-4" />Pago
-                            </Button>
+                          {singleInstallment && singleInstallment.pendingAmount > 0.009 && invoice.status !== 'cancelled' ? (
+                            <form>
+                              <input type="hidden" name="invoiceId" value={invoice.id} />
+                              <input type="hidden" name="installmentId" value={singleInstallment.id} />
+                              <input type="hidden" name="returnPath" value="/facturas" />
+                              <Button type="submit" formAction={quickSettleInvoiceAction}>
+                                <CheckCircle2 className="mr-2 h-4 w-4" />Pagada
+                              </Button>
+                            </form>
                           ) : null}
                           <Button variant="secondary" onClick={() => setEditingInvoice(invoice)}>
                             <Pencil className="mr-2 h-4 w-4" />Editar
@@ -275,15 +317,40 @@ export function InvoicesWorkspace({
                         <CalendarClock className="h-4 w-4 text-[var(--accent-strong)]" />Vencimientos
                       </div>
                       <div className="mt-3 grid gap-2">
-                        {invoice.installments.map((installment) => (
-                          <div key={installment.id} className="flex flex-wrap items-center justify-between gap-3 rounded-[18px] border border-[rgba(123,136,95,0.12)] bg-white/82 px-3 py-3">
-                            <div>
-                              <p className="text-sm font-semibold text-[var(--foreground)]">Pago {installment.sequenceNumber} · {formatDate(installment.dueDate)}</p>
-                              <p className="mt-1 text-sm text-[var(--foreground-soft)]">{formatCurrency(installment.pendingAmount, currency)} pendiente de {formatCurrency(installment.amount, currency)}</p>
+                        {invoice.installments.map((installment) => {
+                          const linkedPayment = installmentPaymentMap.get(installment.id)?.payment ?? null;
+
+                          return (
+                            <div key={installment.id} className="flex flex-wrap items-center justify-between gap-3 rounded-[18px] border border-[rgba(123,136,95,0.12)] bg-white/82 px-3 py-3">
+                              <div>
+                                <p className="text-sm font-semibold text-[var(--foreground)]">Pago {installment.sequenceNumber} · {formatDate(installment.dueDate)}</p>
+                                <p className="mt-1 text-sm text-[var(--foreground-soft)]">{formatCurrency(installment.pendingAmount, currency)} pendiente de {formatCurrency(installment.amount, currency)}</p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {canManage && installment.pendingAmount > 0.009 && invoice.status !== 'cancelled' ? (
+                                  <form>
+                                    <input type="hidden" name="invoiceId" value={invoice.id} />
+                                    <input type="hidden" name="installmentId" value={installment.id} />
+                                    <input type="hidden" name="returnPath" value="/facturas" />
+                                    <Button type="submit" formAction={quickSettleInvoiceAction} className="h-9 px-4 text-xs">
+                                      Pagado
+                                    </Button>
+                                  </form>
+                                ) : null}
+                                {canManage && linkedPayment ? (
+                                  <Button
+                                    variant="ghost"
+                                    className="h-9 w-9 rounded-full px-0"
+                                    onClick={() => setPaymentEditor({ invoice, payment: linkedPayment, installment, mode: 'edit' })}
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                ) : null}
+                                <StatusPill label={installmentLabelMap[installment.status]} tone={installmentToneMap[installment.status]} />
+                              </div>
                             </div>
-                            <StatusPill label={installmentLabelMap[installment.status]} tone={installmentToneMap[installment.status]} />
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
 
@@ -305,13 +372,19 @@ export function InvoicesWorkspace({
                                   {payment.notes ? <p className="mt-1 text-sm text-[var(--foreground-soft)]">{payment.notes}</p> : null}
                                 </div>
                                 {canManage ? (
-                                  <form>
-                                    <input type="hidden" name="paymentId" value={payment.id} />
-                                    <input type="hidden" name="returnPath" value="/facturas" />
-                                    <Button type="submit" variant="ghost" className="h-9 px-3 text-[var(--danger)] hover:bg-[rgba(155,91,83,0.08)] hover:text-[var(--danger)]" formAction={deleteInvoicePaymentAction}>
-                                      <Trash2 className="h-4 w-4" />
+                                  <div className="flex items-center gap-2">
+                                    <Button variant="ghost" className="h-9 w-9 rounded-full px-0" onClick={() => setPaymentEditor({ invoice, payment, installment: null, mode: 'edit' })}>
+                                      <Pencil className="h-4 w-4" />
                                     </Button>
-                                  </form>
+                                    <form>
+                                      <input type="hidden" name="paymentId" value={payment.id} />
+                                      <input type="hidden" name="invoiceId" value={invoice.id} />
+                                      <input type="hidden" name="returnPath" value="/facturas" />
+                                      <Button type="submit" variant="ghost" className="h-9 px-3 text-[var(--danger)] hover:bg-[rgba(155,91,83,0.08)] hover:text-[var(--danger)]" formAction={deleteInvoicePaymentAction}>
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    </form>
+                                  </div>
                                 ) : null}
                               </div>
                             </div>
@@ -340,7 +413,16 @@ export function InvoicesWorkspace({
 
       <InvoiceSheet open={createOpen} onClose={() => setCreateOpen(false)} catalogs={catalogs} returnPath="/facturas" title="Nueva factura" />
       <InvoiceSheet open={Boolean(editingInvoice)} onClose={() => setEditingInvoice(null)} catalogs={catalogs} invoice={editingInvoice} returnPath="/facturas" title="Editar factura" />
-      <InvoicePaymentSheet open={Boolean(paymentInvoice)} onClose={() => setPaymentInvoice(null)} catalogs={catalogs} invoice={paymentInvoice} returnPath="/facturas" />
+      <InvoicePaymentSheet
+        open={Boolean(paymentEditor)}
+        onClose={() => setPaymentEditor(null)}
+        catalogs={catalogs}
+        invoice={paymentEditor?.invoice ?? null}
+        payment={paymentEditor?.payment ?? null}
+        installment={paymentEditor?.installment ?? null}
+        mode={paymentEditor?.mode ?? 'create'}
+        returnPath="/facturas"
+      />
     </div>
   );
 }

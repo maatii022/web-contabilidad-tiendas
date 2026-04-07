@@ -19,6 +19,7 @@ const invoiceSchema = z.object({
 });
 
 const invoicePaymentSchema = z.object({
+  paymentId: z.string().uuid('Pago inválido.').optional().or(z.literal('')),
   invoiceId: z.string().uuid('Factura inválida.'),
   accountId: z.string().uuid('Selecciona una cuenta.'),
   paymentDate: z.string().min(1, 'Indica la fecha de pago.'),
@@ -28,8 +29,14 @@ const invoicePaymentSchema = z.object({
   notes: z.string().max(800, 'Las notas son demasiado largas.').optional().or(z.literal(''))
 });
 
+const quickPaymentSchema = z.object({
+  invoiceId: z.string().uuid('Factura inválida.'),
+  installmentId: z.string().uuid('Vencimiento inválido.').optional().or(z.literal('')),
+  returnPath: z.string().min(1).optional().or(z.literal(''))
+});
+
 function buildFieldErrors(error: z.ZodError) {
-  return error.issues.reduce<Record<string, string>>((acc, issue: z.ZodIssue) => {
+  return error.issues.reduce<Record<string, string>>((acc: Record<string, string>, issue: z.ZodIssue) => {
     const field = typeof issue.path[0] === 'string' ? issue.path[0] : 'form';
     if (!acc[field]) {
       acc[field] = issue.message;
@@ -49,6 +56,78 @@ function parseInstallments(formData: FormData) {
   }));
 
   return rows.filter((row) => row.dueDate || row.amount > 0);
+}
+
+async function refreshInvoiceSchedule(supabase: Awaited<ReturnType<typeof createClient>>, invoiceId: string) {
+  await supabase.rpc('refresh_purchase_invoice_schedule', {
+    p_invoice_id: invoiceId
+  });
+}
+
+async function getDefaultAccountId(supabase: Awaited<ReturnType<typeof createClient>>, businessId: string) {
+  const { data } = await supabase
+    .from('accounts')
+    .select('id')
+    .eq('business_id', businessId)
+    .eq('is_active', true)
+    .order('is_primary', { ascending: false })
+    .order('name', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  return data?.id ?? null;
+}
+
+async function insertInvoicePayment({
+  supabase,
+  businessId,
+  userId,
+  invoiceId,
+  accountId,
+  paymentDate,
+  amount,
+  paymentMethod,
+  reference,
+  notes
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  businessId: string;
+  userId: string;
+  invoiceId: string;
+  accountId: string;
+  paymentDate: string;
+  amount: number;
+  paymentMethod: (typeof paymentMethods)[number];
+  reference: string | null;
+  notes: string | null;
+}) {
+  const { data, error } = await supabase
+    .from('purchase_invoice_payments')
+    .insert({
+      business_id: businessId,
+      invoice_id: invoiceId,
+      account_id: accountId,
+      payment_date: paymentDate,
+      amount: toDecimalString(amount),
+      payment_method: paymentMethod,
+      reference,
+      notes,
+      created_by: userId
+    })
+    .select('id')
+    .single();
+
+  if (error || !data) {
+    throw new Error('No se pudo registrar el pago.');
+  }
+
+  await refreshInvoiceSchedule(supabase, invoiceId);
+
+  return data.id;
+}
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 export async function upsertInvoiceAction(
@@ -238,9 +317,7 @@ export async function upsertInvoiceAction(
       };
     }
 
-    await supabase.rpc('refresh_purchase_invoice_schedule', {
-      p_invoice_id: persistedInvoiceId
-    });
+    await refreshInvoiceSchedule(supabase, persistedInvoiceId);
 
     if (attachment && persistedInvoiceId) {
       await uploadAttachment({
@@ -274,7 +351,7 @@ export async function createInvoiceQuickAction(
   return upsertInvoiceAction(prevState, formData);
 }
 
-export async function addInvoicePaymentAction(
+export async function upsertInvoicePaymentAction(
   _prevState: InvoicePaymentFormState,
   formData: FormData
 ): Promise<InvoicePaymentFormState> {
@@ -284,6 +361,7 @@ export async function addInvoicePaymentAction(
     const returnPath = getReturnPath(formData);
 
     const parsed = invoicePaymentSchema.safeParse({
+      paymentId: getTextEntry(formData, 'paymentId'),
       invoiceId: getTextEntry(formData, 'invoiceId'),
       accountId: getTextEntry(formData, 'accountId'),
       paymentDate: getTextEntry(formData, 'paymentDate'),
@@ -326,15 +404,20 @@ export async function addInvoicePaymentAction(
 
     const { data: paymentSumRows } = await supabase
       .from('purchase_invoice_payments')
-      .select('amount')
+      .select('id, amount')
       .eq('business_id', appContext.business.id)
       .eq('invoice_id', values.invoiceId);
 
-    const paymentRows = (paymentSumRows ?? []) as Array<{ amount: string | number | null }>;
-    const currentPaid = paymentRows.reduce((sum: number, payment) => sum + Number(payment.amount ?? 0), 0);
+    const paymentRows = (paymentSumRows ?? []) as Array<{ id: string; amount: string | number | null }>;
+    const currentPaidExcludingEdited = paymentRows.reduce((sum, payment) => {
+      if (values.paymentId && payment.id === values.paymentId) {
+        return sum;
+      }
+      return sum + Number(payment.amount ?? 0);
+    }, 0);
     const totalInvoice = Number(invoice.total ?? 0);
 
-    if (currentPaid + values.amount > totalInvoice + 0.009) {
+    if (currentPaidExcludingEdited + values.amount > totalInvoice + 0.009) {
       return {
         status: 'error',
         fieldErrors: {
@@ -344,30 +427,51 @@ export async function addInvoicePaymentAction(
       };
     }
 
-    const { error } = await supabase.from('purchase_invoice_payments').insert({
-      business_id: appContext.business.id,
-      invoice_id: values.invoiceId,
-      account_id: values.accountId,
-      payment_date: values.paymentDate,
-      amount: toDecimalString(values.amount),
-      payment_method: values.paymentMethod,
-      reference: getOptionalTextEntry(formData, 'reference'),
-      notes: getOptionalTextEntry(formData, 'notes'),
-      created_by: appContext.user.id
-    });
+    if (values.paymentId) {
+      const { error } = await supabase
+        .from('purchase_invoice_payments')
+        .update({
+          account_id: values.accountId,
+          payment_date: values.paymentDate,
+          amount: toDecimalString(values.amount),
+          payment_method: values.paymentMethod,
+          reference: getOptionalTextEntry(formData, 'reference'),
+          notes: getOptionalTextEntry(formData, 'notes')
+        })
+        .eq('id', values.paymentId)
+        .eq('business_id', appContext.business.id)
+        .eq('invoice_id', values.invoiceId);
 
-    if (error) {
-      return {
-        status: 'error',
-        message: 'No se pudo registrar el pago.'
-      };
+      if (error) {
+        return {
+          status: 'error',
+          message: 'No se pudo actualizar el pago.'
+        };
+      }
+    } else {
+      await insertInvoicePayment({
+        supabase,
+        businessId: appContext.business.id,
+        userId: appContext.user.id,
+        invoiceId: values.invoiceId,
+        accountId: values.accountId,
+        paymentDate: values.paymentDate,
+        amount: values.amount,
+        paymentMethod: values.paymentMethod,
+        reference: getOptionalTextEntry(formData, 'reference'),
+        notes: getOptionalTextEntry(formData, 'notes')
+      });
+    }
+
+    if (values.paymentId) {
+      await refreshInvoiceSchedule(supabase, values.invoiceId);
     }
 
     refreshCorePaths(returnPath);
 
     return {
       status: 'success',
-      message: 'Pago registrado.'
+      message: values.paymentId ? 'Pago actualizado.' : 'Pago registrado.'
     };
   } catch (error) {
     return {
@@ -375,6 +479,75 @@ export async function addInvoicePaymentAction(
       message: error instanceof Error ? error.message : 'No se pudo registrar el pago.'
     };
   }
+}
+
+export async function addInvoicePaymentAction(
+  prevState: InvoicePaymentFormState,
+  formData: FormData
+): Promise<InvoicePaymentFormState> {
+  return upsertInvoicePaymentAction(prevState, formData);
+}
+
+export async function quickSettleInvoiceAction(formData: FormData) {
+  const parsed = quickPaymentSchema.safeParse({
+    invoiceId: getTextEntry(formData, 'invoiceId'),
+    installmentId: getTextEntry(formData, 'installmentId'),
+    returnPath: getTextEntry(formData, 'returnPath')
+  });
+
+  if (!parsed.success) {
+    throw new Error('No se pudo marcar la factura como pagada.');
+  }
+
+  const { invoiceId, installmentId, returnPath: rawReturnPath } = parsed.data;
+  const appContext = await requireManageContext();
+  const supabase = await createClient();
+  const returnPath = rawReturnPath && rawReturnPath.startsWith('/') ? rawReturnPath : '/facturas';
+  const defaultAccountId = await getDefaultAccountId(supabase, appContext.business.id);
+
+  if (!defaultAccountId) {
+    throw new Error('No hay una cuenta activa disponible para registrar el pago.');
+  }
+
+  const { data: installments, error } = await supabase
+    .from('purchase_invoice_installments')
+    .select('id, invoice_id, amount, paid_amount, status')
+    .eq('business_id', appContext.business.id)
+    .eq('invoice_id', invoiceId)
+    .order('sequence_number', { ascending: true });
+
+  if (error || !installments || installments.length === 0) {
+    throw new Error('No se encontraron vencimientos para esta factura.');
+  }
+
+  const target = installmentId
+    ? installments.find((installment) => installment.id === installmentId)
+    : installments.find((installment) => installment.status !== 'paid') ?? installments[0];
+
+  if (!target) {
+    throw new Error('No se encontró el vencimiento a pagar.');
+  }
+
+  const pendingAmount = Math.max(parseMoney(target.amount) - parseMoney(target.paid_amount), 0);
+
+  if (pendingAmount <= 0.009) {
+    throw new Error('Ese vencimiento ya está pagado.');
+  }
+
+  await insertInvoicePayment({
+    supabase,
+    businessId: appContext.business.id,
+    userId: appContext.user.id,
+    invoiceId,
+    accountId: defaultAccountId,
+    paymentDate: todayIso(),
+    amount: pendingAmount,
+    paymentMethod: 'transfer',
+    reference: null,
+    notes: installmentId ? `Pago rápido del vencimiento ${target.id}` : 'Pago rápido de factura'
+  });
+
+  refreshCorePaths(returnPath);
 }
 
 export async function deleteInvoiceAction(formData: FormData) {
@@ -410,6 +583,7 @@ export async function deleteInvoicePaymentAction(formData: FormData) {
   const appContext = await requireManageContext();
   const supabase = await createClient();
   const paymentId = getTextEntry(formData, 'paymentId');
+  const invoiceId = getTextEntry(formData, 'invoiceId');
   const returnPath = getReturnPath(formData);
 
   if (!paymentId) {
@@ -424,6 +598,10 @@ export async function deleteInvoicePaymentAction(formData: FormData) {
 
   if (error) {
     throw new Error('No se pudo eliminar el pago.');
+  }
+
+  if (invoiceId) {
+    await refreshInvoiceSchedule(supabase, invoiceId);
   }
 
   refreshCorePaths(returnPath);
