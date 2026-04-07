@@ -47,7 +47,7 @@ function currentMonthRange() {
 export function getInvoiceFilters(searchParams?: Record<string, string | string[] | undefined>): InvoiceFilters {
   const defaults = currentMonthRange();
   const rawPeriod = normalizeFilter(searchParams?.period);
-  const period = rawPeriod === 'all' ? 'all' : 'current-month';
+  const period = rawPeriod === 'current-month' ? 'current-month' : 'all';
   const rawFrom = normalizeFilter(searchParams?.from);
   const rawTo = normalizeFilter(searchParams?.to);
 
@@ -55,8 +55,8 @@ export function getInvoiceFilters(searchParams?: Record<string, string | string[
     query: normalizeFilter(searchParams?.q).trim(),
     status: normalizeFilter(searchParams?.status),
     vendorId: normalizeFilter(searchParams?.vendor),
-    dueFrom: period === 'all' ? rawFrom : rawFrom || defaults.from,
-    dueTo: period === 'all' ? rawTo : rawTo || defaults.to,
+    dueFrom: period === 'current-month' ? rawFrom || defaults.from : rawFrom,
+    dueTo: period === 'current-month' ? rawTo || defaults.to : rawTo,
     period,
     highlightedInvoiceId: normalizeFilter(searchParams?.invoice)
   };

@@ -144,12 +144,20 @@ function InvoiceSheetForm({
   const router = useRouter();
   const formRef = useRef<HTMLFormElement | null>(null);
   const [state, formAction, pending] = useActionState(upsertInvoiceAction, invoiceFormInitialState);
+  const [vendorName, setVendorName] = useState(invoice?.vendorName ?? '');
+  const [invoiceNumber, setInvoiceNumber] = useState(invoice?.invoiceNumber ?? '');
+  const [issueDate, setIssueDate] = useState(invoice?.issueDate ?? todayIso());
+  const [notes, setNotes] = useState(invoice?.notes ?? '');
   const [total, setTotal] = useState(invoice?.total.toFixed(2) ?? '0.00');
   const [firstDueDate, setFirstDueDate] = useState(invoice?.installments[0]?.dueDate ?? invoice?.dueDate ?? dueDateDefault());
   const [plan, setPlan] = useState<InvoicePlan>(inferPlan(invoice));
   const [installments, setInstallments] = useState<DraftInstallment[]>(initialSchedule(invoice));
 
   useEffect(() => {
+    setVendorName(invoice?.vendorName ?? '');
+    setInvoiceNumber(invoice?.invoiceNumber ?? '');
+    setIssueDate(invoice?.issueDate ?? todayIso());
+    setNotes(invoice?.notes ?? '');
     setTotal(invoice?.total.toFixed(2) ?? '0.00');
     setFirstDueDate(invoice?.installments[0]?.dueDate ?? invoice?.dueDate ?? dueDateDefault());
     setPlan(inferPlan(invoice));
@@ -229,7 +237,8 @@ function InvoiceSheetForm({
               className={inputClassName(Boolean(state.fieldErrors?.vendorName)) + ' pl-11'}
               name="vendorName"
               placeholder={catalogs.vendors.length ? 'Escribe el nombre del proveedor' : 'Primero crea proveedores en Configuración'}
-              defaultValue={invoice?.vendorName ?? ''}
+              value={vendorName}
+              onChange={(event) => setVendorName(event.target.value)}
               autoComplete="off"
             />
             <datalist id="invoice-vendor-options">
@@ -247,14 +256,14 @@ function InvoiceSheetForm({
       </Field>
 
       <Field label="Número de factura" error={state.fieldErrors?.invoiceNumber}>
-        <input className={inputClassName(Boolean(state.fieldErrors?.invoiceNumber))} name="invoiceNumber" placeholder="Ej. A-2026-041" defaultValue={invoice?.invoiceNumber ?? ''} />
+        <input className={inputClassName(Boolean(state.fieldErrors?.invoiceNumber))} name="invoiceNumber" placeholder="Ej. A-2026-041" value={invoiceNumber} onChange={(event) => setInvoiceNumber(event.target.value)} />
       </Field>
 
       <div className="grid gap-4 md:grid-cols-2">
         <Field label="Emisión" error={state.fieldErrors?.issueDate}>
           <div className="relative">
             <CalendarRange className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--foreground-muted)]" />
-            <input className={inputClassName(Boolean(state.fieldErrors?.issueDate)) + ' pl-11'} type="date" name="issueDate" defaultValue={invoice?.issueDate ?? todayIso()} />
+            <input className={inputClassName(Boolean(state.fieldErrors?.issueDate)) + ' pl-11'} type="date" name="issueDate" value={issueDate} onChange={(event) => setIssueDate(event.target.value)} />
           </div>
         </Field>
         <Field label="Primer vencimiento" error={state.fieldErrors?.installments || state.fieldErrors?.dueDate}>
@@ -327,7 +336,7 @@ function InvoiceSheetForm({
       </Field>
 
       <Field label="Notas" error={state.fieldErrors?.notes}>
-        <textarea className={textareaClassName(Boolean(state.fieldErrors?.notes))} name="notes" placeholder="Observaciones internas" defaultValue={invoice?.notes ?? ''} />
+        <textarea className={textareaClassName(Boolean(state.fieldErrors?.notes))} name="notes" placeholder="Observaciones internas" value={notes} onChange={(event) => setNotes(event.target.value)} />
       </Field>
 
       <Field label="Adjunto" hint="PDF o imagen, hasta 10 MB.">

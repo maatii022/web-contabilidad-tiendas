@@ -160,11 +160,11 @@ export function InvoicesWorkspace({
 
           <div className="flex flex-col gap-3 border-t border-[rgba(123,136,95,0.12)] pt-4 md:flex-row md:items-center md:justify-between">
             <div className="flex flex-wrap items-center gap-2 text-sm text-[var(--foreground-soft)]">
-              <a className={buttonClassName(filters.period === 'current-month' ? 'secondary' : 'ghost')} href="/facturas">
-                Mes actual
-              </a>
-              <a className={buttonClassName(filters.period === 'all' ? 'secondary' : 'ghost')} href="/facturas?period=all">
+              <a className={buttonClassName(filters.period === 'all' ? 'secondary' : 'ghost')} href="/facturas">
                 Todo
+              </a>
+              <a className={buttonClassName(filters.period === 'current-month' ? 'secondary' : 'ghost')} href="/facturas?period=current-month">
+                Mes actual
               </a>
             </div>
             <div className="flex flex-wrap items-center gap-2">
