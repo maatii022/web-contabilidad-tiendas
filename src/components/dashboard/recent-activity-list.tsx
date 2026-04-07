@@ -1,0 +1,10 @@
+import { Activity, ArrowDownRight, ArrowUpRight, Scale } from 'lucide-react';
+import { EmptyDashboardState } from '@/components/dashboard/empty-dashboard-state';
+import { StatusPill } from '@/components/dashboard/status-pill';
+import type { RecentActivityItem } from '@/features/dashboard/types';
+import { formatCurrency, formatDate } from '@/lib/utils';
+function getActivityMeta(type: RecentActivityItem['type']) { switch (type) { case 'income': return { label: 'Ingreso', tone: 'success' as const, Icon: ArrowUpRight, prefix: '+' }; case 'expense': return { label: 'Salida', tone: 'danger' as const, Icon: ArrowDownRight, prefix: '−' }; default: return { label: 'Ajuste', tone: 'neutral' as const, Icon: Scale, prefix: '' }; } }
+export function RecentActivityList({ items, currency }: { items: RecentActivityItem[]; currency: string; }) {
+  if (items.length === 0) return <EmptyDashboardState icon={Activity} title="Todavía no hay movimientos recientes" description="En cuanto registres ingresos, salidas o ajustes en caja y banco, esta sección mostrará la actividad operativa del negocio." />;
+  return <div className="space-y-3">{items.map((item) => { const meta = getActivityMeta(item.type); const Icon = meta.Icon; return <div key={item.id} className="dashboard-row flex flex-col gap-3 rounded-[22px] border border-[rgba(123,136,95,0.12)] bg-[rgba(255,255,255,0.54)] px-4 py-4 md:flex-row md:items-center md:justify-between"><div className="flex min-w-0 items-start gap-3"><span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[rgba(110,127,86,0.1)] text-[var(--accent-strong)]"><Icon className="h-4 w-4" /></span><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="truncate text-sm font-semibold text-[var(--foreground)]">{item.concept}</p><StatusPill label={meta.label} tone={meta.tone} /></div><p className="mt-2 text-sm text-[var(--foreground-soft)]">{item.accountName}, {formatDate(item.entryDate)}</p></div></div><p className="shrink-0 text-sm font-semibold text-[var(--foreground)] md:text-right">{meta.prefix}{formatCurrency(item.amount, currency)}</p></div>; })}</div>;
+}

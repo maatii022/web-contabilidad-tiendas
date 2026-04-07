@@ -1,0 +1,97 @@
+@import 'tailwindcss';
+
+:root {
+  --background: #f3ede2;
+  --background-soft: #fcf9f4;
+  --panel: rgba(255, 252, 247, 0.9);
+  --panel-strong: rgba(255, 252, 247, 0.98);
+  --panel-border: rgba(123, 136, 95, 0.18);
+  --foreground: #243126;
+  --foreground-soft: #5d695b;
+  --foreground-muted: #778273;
+  --accent: #6e7f56;
+  --accent-strong: #536341;
+  --accent-soft: rgba(110, 127, 86, 0.12);
+  --danger: #9b5b53;
+  --warning: #af7b35;
+  --success: #557552;
+  --shadow: 0 16px 40px rgba(63, 73, 49, 0.09);
+  --shadow-strong: 0 28px 70px rgba(60, 70, 49, 0.14);
+  --radius-xl: 28px;
+  --radius-lg: 22px;
+  --radius-md: 16px;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(188, 198, 168, 0.28), transparent 24%),
+    radial-gradient(circle at 100% 0%, rgba(215, 205, 186, 0.32), transparent 18%),
+    linear-gradient(180deg, var(--background-soft) 0%, var(--background) 100%);
+  color: var(--foreground);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+}
+body::selection { background: rgba(110, 127, 86, 0.25); }
+main { min-height: 100vh; }
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+input, select, textarea { outline: none; }
+input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 4px rgba(110, 127, 86, 0.14); }
+
+.glass-panel {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.76) 0%, rgba(255,251,246,0.92) 100%),
+    var(--panel);
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(20px);
+}
+
+.surface-card {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.82) 0%, rgba(255,250,244,0.92) 100%);
+  border: 1px solid rgba(123,136,95,0.14);
+  box-shadow: 0 16px 34px rgba(63, 73, 49, 0.08);
+}
+
+.dashboard-surface {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.8) 0%, rgba(255,250,244,0.9) 100%),
+    rgba(255,251,246,0.84);
+}
+
+.dashboard-row {
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.dashboard-row:hover {
+  transform: translateY(-2px);
+  border-color: rgba(110,127,86,0.22);
+  box-shadow: 0 18px 34px rgba(60,70,49,0.08);
+}
+
+.soft-ring { box-shadow: 0 0 0 1px rgba(123, 136, 95, 0.1), var(--shadow); }
+.page-grid { display: grid; gap: 1.25rem; }
+.metric-glow { position: relative; }
+.metric-glow::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(circle at top left, rgba(110,127,86,0.24), transparent 42%);
+  opacity: 0.95;
+}
+
+.bank-chip {
+  border: 1px solid rgba(123,136,95,0.14);
+  background: rgba(255,255,255,0.72);
+  box-shadow: 0 10px 22px rgba(60,70,49,0.05);
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

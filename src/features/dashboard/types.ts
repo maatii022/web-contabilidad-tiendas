@@ -1,0 +1,11 @@
+import type { Database } from '@/types/database';
+export type AccountType = Database['public']['Enums']['account_type'];
+export type EntryType = Database['public']['Enums']['entry_type'];
+export type InvoiceStatus = Database['public']['Enums']['invoice_status'];
+export type DashboardStats = { monthlyExpenses: number; pendingInvoices: number; overdueInvoices: number; dueSoonInvoices: number; totalBalance: number; activeAccounts: number; };
+export type UpcomingInvoiceItem = { id: string; vendorName: string; invoiceNumber: string; dueDate: string; total: number; status: InvoiceStatus; daysUntilDue: number; };
+export type RecentActivityItem = { id: string; accountName: string; concept: string; entryDate: string; amount: number; type: EntryType; };
+export type AccountBalanceItem = { id: string; name: string; type: AccountType; isPrimary: boolean; balance: number; };
+export type SummaryTone = 'success' | 'warning' | 'danger' | 'neutral';
+export type SummaryInsight = { id: string; title: string; description: string; tone: SummaryTone; };
+export type DashboardSnapshot = { stats: DashboardStats; upcomingInvoices: UpcomingInvoiceItem[]; recentActivity: RecentActivityItem[]; accountBalances: AccountBalanceItem[]; summary: SummaryInsight[]; };
