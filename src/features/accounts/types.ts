@@ -90,6 +90,18 @@ export type DailyClosingFormState = {
   fieldErrors?: Record<string, string>;
 };
 
+export type CashClosingFormState = {
+  status: 'idle' | 'success' | 'error';
+  message?: string;
+  fieldErrors?: Record<string, string>;
+};
+
+export type AccountTransferFormState = {
+  status: 'idle' | 'success' | 'error';
+  message?: string;
+  fieldErrors?: Record<string, string>;
+};
+
 export const accountFormInitialState: AccountFormState = {
   status: 'idle'
 };
@@ -99,5 +111,13 @@ export const accountEntryFormInitialState: AccountEntryFormState = {
 };
 
 export const dailyClosingFormInitialState: DailyClosingFormState = {
+  status: 'idle'
+};
+
+export const cashClosingFormInitialState: CashClosingFormState = {
+  status: 'idle'
+};
+
+export const accountTransferFormInitialState: AccountTransferFormState = {
   status: 'idle'
 };

@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation';
 
 import { Field, inputClassName, textareaClassName } from '@/components/forms/form-field';
 import { Sheet } from '@/components/forms/sheet';
+import { useCloseOnSuccess, useSheetSessionKey } from '@/components/forms/sheet-session';
 import { Button } from '@/components/ui/button';
 import { upsertInvoiceAction } from '@/features/invoices/actions';
 import {
@@ -115,12 +116,7 @@ type InvoiceSheetProps = {
 
 export function InvoiceSheet(props: InvoiceSheetProps) {
   const { open, invoice } = props;
-  const [sessionKey, setSessionKey] = useState(0);
-
-  useEffect(() => {
-    if (!open) return;
-    setSessionKey((current) => current + 1);
-  }, [open, invoice?.id]);
+  const sessionKey = useSheetSessionKey(open, props.invoice?.id ?? 'new');
 
   return (
     <Sheet
@@ -164,12 +160,10 @@ function InvoiceSheetForm({
     setInstallments(initialSchedule(invoice));
   }, [invoice]);
 
-  useEffect(() => {
-    if (state.status === 'success') {
-      router.refresh();
-      onClose();
-    }
-  }, [onClose, router, state.status]);
+  useCloseOnSuccess(state.status, () => {
+    router.refresh();
+    onClose();
+  });
 
   useEffect(() => {
     if (plan === 'custom') return;

@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import { getTextEntry, toDecimalString } from '@/features/expenses/helpers';
 import { closingMetrics } from '@/features/accounts/helpers';
-import type { AccountEntryFormState, AccountFormState, DailyClosingFormState } from '@/features/accounts/types';
+import type { AccountEntryFormState, AccountFormState, DailyClosingFormState, CashClosingFormState, AccountTransferFormState } from '@/features/accounts/types';
 import { getReturnPath, refreshCorePaths, requireManageContext } from '@/features/operations/shared';
 import { createClient } from '@/lib/supabase/server';
 import type { Database } from '@/types/database';
@@ -47,6 +47,26 @@ function buildFieldErrors(error: z.ZodError) {
 
 function refreshCashPaths(returnPath: string) {
   refreshCorePaths(returnPath || '/caja');
+}
+
+function buildRawFieldErrors(entries: Array<[string, string]>) {
+  return entries.reduce<Record<string, string>>((acc, [field, message]) => {
+    if (!acc[field]) acc[field] = message;
+    return acc;
+  }, {});
+}
+
+async function fetchBusinessAccounts(businessId: string) {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from('accounts')
+    .select('id, name, type, is_primary, initial_balance')
+    .eq('business_id', businessId)
+    .eq('is_active', true)
+    .order('is_primary', { ascending: false })
+    .order('name', { ascending: true });
+
+  return data ?? [];
 }
 
 export async function upsertAccountAction(
@@ -315,6 +335,197 @@ export async function createDailyClosingAction(
       status: 'error',
       message: error instanceof Error ? error.message : 'No se pudo registrar el cierre.'
     };
+  }
+}
+
+
+export async function createCashClosingAction(
+  _prevState: CashClosingFormState,
+  formData: FormData
+): Promise<CashClosingFormState> {
+  try {
+    const appContext = await requireManageContext();
+    const supabase = await createClient();
+    const returnPath = getReturnPath(formData);
+
+    const sourceAccountId = getTextEntry(formData, 'sourceAccountId');
+    const closingDate = getTextEntry(formData, 'closingDate');
+    const total = Number.parseFloat(getTextEntry(formData, 'total').replace(',', '.'));
+    const notes = getTextEntry(formData, 'notes');
+    const allocationAccountIds = formData.getAll('allocationAccountId').map((value) => (typeof value === 'string' ? value.trim() : ''));
+    const allocationAmounts = formData.getAll('allocationAmount').map((value) => (typeof value === 'string' ? value.trim() : ''));
+
+    const errors: Array<[string, string]> = [];
+    if (!sourceAccountId) errors.push(['sourceAccountId', 'Selecciona la cuenta que cierras.']);
+    if (!closingDate) errors.push(['closingDate', 'Indica la fecha del cierre.']);
+    if (!Number.isFinite(total) || total <= 0) errors.push(['total', 'Indica un total válido.']);
+
+    const allocations = allocationAccountIds.map((accountId, index) => ({
+      accountId,
+      amount: Number.parseFloat((allocationAmounts[index] ?? '').replace(',', '.'))
+    })).filter((item) => item.accountId || Number.isFinite(item.amount));
+
+    if (allocations.length === 0) {
+      errors.push(['allocations', 'Reparte el cierre entre al menos una cuenta.']);
+    }
+
+    allocations.forEach((item, index) => {
+      if (!item.accountId) errors.push(['allocations', `Falta la cuenta destino en la línea ${index + 1}.`]);
+      if (!Number.isFinite(item.amount) || item.amount <= 0) errors.push(['allocations', `Indica un importe válido en la línea ${index + 1}.`]);
+    });
+
+    const allocationTotal = allocations.reduce((sum, item) => sum + (Number.isFinite(item.amount) ? item.amount : 0), 0);
+    if (Math.abs(allocationTotal - (Number.isFinite(total) ? total : 0)) > 0.01) {
+      errors.push(['allocations', 'El reparto debe cuadrar exactamente con el total del cierre.']);
+    }
+
+    if (errors.length) {
+      return { status: 'error', message: 'Revisa el cierre antes de guardarlo.', fieldErrors: buildRawFieldErrors(errors) };
+    }
+
+    const accounts = await fetchBusinessAccounts(appContext.business.id);
+    const sourceAccount = accounts.find((account) => account.id === sourceAccountId);
+    if (!sourceAccount) {
+      return { status: 'error', message: 'La cuenta de cierre no existe.' };
+    }
+
+    const { data: existingClosing } = await supabase
+      .from('daily_closings')
+      .select('id')
+      .eq('business_id', appContext.business.id)
+      .eq('account_id', sourceAccountId)
+      .eq('closing_date', closingDate)
+      .maybeSingle();
+
+    if (existingClosing?.id) {
+      return { status: 'error', message: 'Ya existe un cierre guardado para esa cuenta y fecha.' };
+    }
+
+    const [priorEntriesResult, sameDayEntriesResult] = await Promise.all([
+      supabase.from('account_entries').select('type, amount').eq('business_id', appContext.business.id).eq('account_id', sourceAccountId).lt('entry_date', closingDate),
+      supabase.from('account_entries').select('type, amount').eq('business_id', appContext.business.id).eq('account_id', sourceAccountId).eq('entry_date', closingDate)
+    ]);
+
+    const priorEntries = priorEntriesResult.data ?? [];
+    const sameDayEntries = sameDayEntriesResult.data ?? [];
+    const openingBalance = priorEntries.reduce((sum, entry) => {
+      if (entry.type === 'expense') return sum - Number.parseFloat(String(entry.amount ?? 0));
+      return sum + Number.parseFloat(String(entry.amount ?? 0));
+    }, Number.parseFloat(String(sourceAccount.initial_balance ?? 0)));
+
+    const syntheticEntries = [...sameDayEntries, { type: 'income' as const, amount: total }];
+    const metrics = closingMetrics({ openingBalance, entries: syntheticEntries });
+
+    const { data: closingRow, error: closingError } = await supabase
+      .from('daily_closings')
+      .insert({
+        business_id: appContext.business.id,
+        account_id: sourceAccountId,
+        closing_date: closingDate,
+        opening_balance: toDecimalString(openingBalance),
+        inflow_total: toDecimalString(metrics.inflowTotal),
+        outflow_total: toDecimalString(metrics.outflowTotal),
+        closing_balance: toDecimalString(metrics.closingBalance),
+        notes: notes || null,
+        created_by: appContext.user.id
+      })
+      .select('id')
+      .single();
+
+    if (closingError || !closingRow) {
+      return { status: 'error', message: 'No se pudo guardar el cierre.' };
+    }
+
+    const entryPayload = allocations.map((item) => ({
+      business_id: appContext.business.id,
+      account_id: item.accountId,
+      entry_date: closingDate,
+      type: 'income' as const,
+      concept: `Cierre de caja · ${sourceAccount.name}`,
+      amount: toDecimalString(item.amount),
+      source_type: 'cash_closing',
+      source_id: closingRow.id,
+      notes: notes || null,
+      created_by: appContext.user.id
+    }));
+
+    const { error: entriesError } = await supabase.from('account_entries').insert(entryPayload);
+    if (entriesError) {
+      await supabase.from('daily_closings').delete().eq('id', closingRow.id).eq('business_id', appContext.business.id);
+      return { status: 'error', message: 'No se pudo repartir el cierre entre las cuentas.' };
+    }
+
+    refreshCashPaths(returnPath);
+    return { status: 'success', message: 'Cierre repartido y guardado.' };
+  } catch (error) {
+    return { status: 'error', message: error instanceof Error ? error.message : 'No se pudo guardar el cierre.' };
+  }
+}
+
+export async function createAccountTransferAction(
+  _prevState: AccountTransferFormState,
+  formData: FormData
+): Promise<AccountTransferFormState> {
+  try {
+    const appContext = await requireManageContext();
+    const supabase = await createClient();
+    const returnPath = getReturnPath(formData);
+
+    const sourceAccountId = getTextEntry(formData, 'sourceAccountId');
+    const destinationAccountId = getTextEntry(formData, 'destinationAccountId');
+    const transferDate = getTextEntry(formData, 'transferDate');
+    const amount = Number.parseFloat(getTextEntry(formData, 'amount').replace(',', '.'));
+    const notes = getTextEntry(formData, 'notes');
+
+    const errors: Array<[string, string]> = [];
+    if (!sourceAccountId) errors.push(['sourceAccountId', 'Selecciona la cuenta de origen.']);
+    if (!destinationAccountId) errors.push(['destinationAccountId', 'Selecciona la cuenta de destino.']);
+    if (sourceAccountId && destinationAccountId && sourceAccountId === destinationAccountId) errors.push(['destinationAccountId', 'El destino debe ser distinto al origen.']);
+    if (!transferDate) errors.push(['transferDate', 'Indica la fecha.']);
+    if (!Number.isFinite(amount) || amount <= 0) errors.push(['amount', 'Indica un importe válido.']);
+
+    if (errors.length) {
+      return { status: 'error', message: 'Revisa la transferencia antes de guardarla.', fieldErrors: buildRawFieldErrors(errors) };
+    }
+
+    const transferId = crypto.randomUUID();
+    const concept = 'Transferencia interna';
+    const payload = [
+      {
+        business_id: appContext.business.id,
+        account_id: sourceAccountId,
+        entry_date: transferDate,
+        type: 'expense' as const,
+        concept,
+        amount: toDecimalString(amount),
+        source_type: 'internal_transfer',
+        source_id: transferId,
+        notes: notes || null,
+        created_by: appContext.user.id
+      },
+      {
+        business_id: appContext.business.id,
+        account_id: destinationAccountId,
+        entry_date: transferDate,
+        type: 'income' as const,
+        concept,
+        amount: toDecimalString(amount),
+        source_type: 'internal_transfer',
+        source_id: transferId,
+        notes: notes || null,
+        created_by: appContext.user.id
+      }
+    ];
+
+    const { error } = await supabase.from('account_entries').insert(payload);
+    if (error) {
+      return { status: 'error', message: 'No se pudo registrar la transferencia.' };
+    }
+
+    refreshCashPaths(returnPath);
+    return { status: 'success', message: 'Transferencia guardada.' };
+  } catch (error) {
+    return { status: 'error', message: error instanceof Error ? error.message : 'No se pudo registrar la transferencia.' };
   }
 }
 

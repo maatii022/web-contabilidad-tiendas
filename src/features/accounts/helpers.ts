@@ -76,6 +76,8 @@ export function entrySourceLabel(sourceType: string | null) {
   if (sourceType === 'expense') return 'Desde gasto';
   if (sourceType === 'purchase_invoice_payment') return 'Pago de factura';
   if (sourceType === 'manual') return 'Manual';
+  if (sourceType === 'cash_closing') return 'Cierre de caja';
+  if (sourceType === 'internal_transfer') return 'Transferencia interna';
   return 'Manual';
 }
 
