@@ -9,6 +9,7 @@ import { Sheet } from '@/components/forms/sheet';
 import { useCloseOnSuccess, useSheetSessionKey } from '@/components/forms/sheet-session';
 import { Button } from '@/components/ui/button';
 import { createCashClosingAction } from '@/features/accounts/actions';
+import { pickStoreCashAccount } from '@/features/accounts/helpers';
 import { cashClosingFormInitialState, type CashCatalogs } from '@/features/accounts/types';
 import { formatCurrency } from '@/lib/utils';
 
@@ -26,41 +27,45 @@ export function CashClosingSheet({
   open,
   onClose,
   catalogs,
-  returnPath,
-  presetSourceAccountId
+  returnPath
 }: {
   open: boolean;
   onClose: () => void;
   catalogs: CashCatalogs;
   returnPath: string;
-  presetSourceAccountId?: string;
 }) {
-  const sessionKey = useSheetSessionKey(open, presetSourceAccountId ?? 'cash-closing');
+  const sessionKey = useSheetSessionKey(open, 'cash-closing');
 
   return (
     <Sheet
       open={open}
       onClose={onClose}
       title="Cierre de caja"
-      description="Reparte el cierre entre efectivo y bancos. El total debe cuadrar antes de guardar."
+      description="Registra el cierre del día y reparte el total entre efectivo y bancos."
     >
-      {open ? <CashClosingSheetForm key={`${presetSourceAccountId ?? 'default'}-${sessionKey}`} onClose={onClose} catalogs={catalogs} returnPath={returnPath} presetSourceAccountId={presetSourceAccountId} /> : null}
+      {open ? <CashClosingSheetForm key={`cash-closing-${sessionKey}`} onClose={onClose} catalogs={catalogs} returnPath={returnPath} /> : null}
     </Sheet>
   );
 }
 
-function CashClosingSheetForm({ onClose, catalogs, returnPath, presetSourceAccountId }: { onClose: () => void; catalogs: CashCatalogs; returnPath: string; presetSourceAccountId?: string; }) {
+function CashClosingSheetForm({ onClose, catalogs, returnPath }: { onClose: () => void; catalogs: CashCatalogs; returnPath: string; }) {
   const router = useRouter();
   const [state, formAction, pending] = useActionState(createCashClosingAction, cashClosingFormInitialState);
-  const defaultSourceAccountId = presetSourceAccountId || catalogs.accounts.find((account) => account.type === 'cash')?.id || catalogs.accounts.find((account) => account.type === 'other')?.id || catalogs.accounts[0]?.id || '';
-  const [sourceAccountId, setSourceAccountId] = useState(defaultSourceAccountId);
+  const storeCashAccount = pickStoreCashAccount(catalogs.accounts);
+  const destinationOptions = catalogs.accounts.filter((account) => account.id !== storeCashAccount?.id);
+  const defaultRows = [
+    destinationOptions.find((account) => account.type === 'other')?.id ?? destinationOptions[0]?.id ?? '',
+    destinationOptions.find((account) => account.type === 'bank')?.id ?? destinationOptions[1]?.id ?? destinationOptions[0]?.id ?? ''
+  ].filter((value, index, array) => value && array.indexOf(value) === index);
+
   const [closingDate, setClosingDate] = useState(todayIso());
   const [total, setTotal] = useState('');
   const [notes, setNotes] = useState('');
-  const [rows, setRows] = useState<AllocationRow[]>([
-    { id: crypto.randomUUID(), accountId: catalogs.accounts[0]?.id ?? '', amount: '' },
-    { id: crypto.randomUUID(), accountId: catalogs.accounts[1]?.id ?? catalogs.accounts[0]?.id ?? '', amount: '' }
-  ]);
+  const [rows, setRows] = useState<AllocationRow[]>(
+    defaultRows.length > 0
+      ? defaultRows.map((accountId) => ({ id: crypto.randomUUID(), accountId, amount: '' }))
+      : [{ id: crypto.randomUUID(), accountId: '', amount: '' }]
+  );
 
   useCloseOnSuccess(state.status, () => {
     router.refresh();
@@ -76,7 +81,7 @@ function CashClosingSheetForm({ onClose, catalogs, returnPath, presetSourceAccou
   }
 
   function addRow() {
-    setRows((current) => [...current, { id: crypto.randomUUID(), accountId: catalogs.accounts[0]?.id ?? '', amount: '' }]);
+    setRows((current) => [...current, { id: crypto.randomUUID(), accountId: destinationOptions[0]?.id ?? '', amount: '' }]);
   }
 
   function removeRow(id: string) {
@@ -84,7 +89,7 @@ function CashClosingSheetForm({ onClose, catalogs, returnPath, presetSourceAccou
   }
 
   function fillRemaining(id: string) {
-    if (!Number.isFinite(remaining)) return;
+    if (!Number.isFinite(remaining) || remaining === 0) return;
     updateRow(id, { amount: remaining.toFixed(2) });
   }
 
@@ -92,35 +97,29 @@ function CashClosingSheetForm({ onClose, catalogs, returnPath, presetSourceAccou
     <form action={formAction} className="grid gap-4">
       <input type="hidden" name="returnPath" value={returnPath} />
 
-      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px]">
-        <Field label="Caja que cierras" error={state.fieldErrors?.sourceAccountId}>
-          <select className={inputClassName(Boolean(state.fieldErrors?.sourceAccountId))} name="sourceAccountId" value={sourceAccountId} onChange={(event) => setSourceAccountId(event.target.value)}>
-            {catalogs.accounts.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Fecha" error={state.fieldErrors?.closingDate}>
-          <div className="relative">
-            <CalendarRange className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--foreground-muted)]" />
-            <input className={inputClassName(Boolean(state.fieldErrors?.closingDate)) + ' pl-11'} type="date" name="closingDate" value={closingDate} onChange={(event) => setClosingDate(event.target.value)} />
-          </div>
-        </Field>
+      <div className="grid gap-3 rounded-[24px] border border-[rgba(123,136,95,0.14)] bg-white/66 p-4 text-sm text-[var(--foreground-soft)]">
+        <p className="font-medium text-[var(--foreground)]">Caja de tienda</p>
+        <p>El cierre pertenece a la operativa diaria de la tienda. Solo repartes el total del día entre efectivo y bancos.</p>
       </div>
+
+      <Field label="Fecha" error={state.fieldErrors?.closingDate}>
+        <div className="relative">
+          <CalendarRange className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--foreground-muted)]" />
+          <input className={inputClassName(Boolean(state.fieldErrors?.closingDate)) + ' pl-11'} type="date" name="closingDate" value={closingDate} onChange={(event) => setClosingDate(event.target.value)} />
+        </div>
+      </Field>
 
       <Field label="Total del cierre" error={state.fieldErrors?.total} hint="El sistema comprobará que el reparto cuadre al céntimo.">
         <input className={inputClassName(Boolean(state.fieldErrors?.total))} type="number" step="0.01" min="0.01" name="total" value={total} onChange={(event) => setTotal(event.target.value)} placeholder="0,00" />
       </Field>
 
-      <Field label="Reparto" error={state.fieldErrors?.allocations} hint="Asigna cada parte del cierre a su cuenta destino.">
+      <Field label="Reparto del cierre" error={state.fieldErrors?.allocations} hint="Reparte el total del día entre efectivo y cuentas bancarias.">
         <div className="grid gap-3 rounded-[24px] border border-[rgba(123,136,95,0.14)] bg-white/66 p-4">
           {rows.map((row) => (
             <div key={row.id} className="grid gap-3 rounded-[22px] border border-[rgba(123,136,95,0.12)] bg-white/90 p-3 md:grid-cols-[minmax(0,1fr)_140px_auto] md:items-center">
               <select className={inputClassName()} name="allocationAccountId" value={row.accountId} onChange={(event) => updateRow(row.id, { accountId: event.target.value })}>
                 <option value="">Cuenta destino</option>
-                {catalogs.accounts.map((account) => (
+                {destinationOptions.map((account) => (
                   <option key={account.id} value={account.id}>
                     {account.name}
                   </option>
@@ -130,7 +129,7 @@ function CashClosingSheetForm({ onClose, catalogs, returnPath, presetSourceAccou
                 <input className={inputClassName()} type="number" step="0.01" min="0.01" name="allocationAmount" value={row.amount} onChange={(event) => updateRow(row.id, { amount: event.target.value })} placeholder="0,00" />
               </div>
               <div className="flex items-center gap-2 md:justify-end">
-                <Button variant="ghost" onClick={() => fillRemaining(row.id)} disabled={!totalValue}>Restante</Button>
+                <Button variant="ghost" onClick={() => fillRemaining(row.id)} disabled={!totalValue || remaining === 0}>Restante</Button>
                 <Button variant="ghost" onClick={() => removeRow(row.id)} disabled={rows.length === 1}><Trash2 className="h-4 w-4" /></Button>
               </div>
             </div>
@@ -144,7 +143,7 @@ function CashClosingSheetForm({ onClose, catalogs, returnPath, presetSourceAccou
           </div>
 
           <div className="flex justify-start">
-            <Button variant="secondary" onClick={addRow}><Plus className="mr-2 h-4 w-4" />Añadir destino</Button>
+            <Button variant="secondary" onClick={addRow}><Plus className="mr-2 h-4 w-4" />Añadir banco o efectivo</Button>
           </div>
         </div>
       </Field>

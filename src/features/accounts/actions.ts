@@ -3,7 +3,7 @@
 import { z } from 'zod';
 
 import { getTextEntry, toDecimalString } from '@/features/expenses/helpers';
-import { closingMetrics } from '@/features/accounts/helpers';
+import { closingMetrics, pickStoreCashAccount } from '@/features/accounts/helpers';
 import type { AccountEntryFormState, AccountFormState, DailyClosingFormState, CashClosingFormState, AccountTransferFormState } from '@/features/accounts/types';
 import { getReturnPath, refreshCorePaths, requireManageContext } from '@/features/operations/shared';
 import { createClient } from '@/lib/supabase/server';
@@ -348,7 +348,6 @@ export async function createCashClosingAction(
     const supabase = await createClient();
     const returnPath = getReturnPath(formData);
 
-    const sourceAccountId = getTextEntry(formData, 'sourceAccountId');
     const closingDate = getTextEntry(formData, 'closingDate');
     const total = Number.parseFloat(getTextEntry(formData, 'total').replace(',', '.'));
     const notes = getTextEntry(formData, 'notes');
@@ -356,7 +355,6 @@ export async function createCashClosingAction(
     const allocationAmounts = formData.getAll('allocationAmount').map((value) => (typeof value === 'string' ? value.trim() : ''));
 
     const errors: Array<[string, string]> = [];
-    if (!sourceAccountId) errors.push(['sourceAccountId', 'Selecciona la cuenta que cierras.']);
     if (!closingDate) errors.push(['closingDate', 'Indica la fecha del cierre.']);
     if (!Number.isFinite(total) || total <= 0) errors.push(['total', 'Indica un total válido.']);
 
@@ -384,16 +382,16 @@ export async function createCashClosingAction(
     }
 
     const accounts = await fetchBusinessAccounts(appContext.business.id);
-    const sourceAccount = accounts.find((account) => account.id === sourceAccountId);
+    const sourceAccount = pickStoreCashAccount(accounts);
     if (!sourceAccount) {
-      return { status: 'error', message: 'La cuenta de cierre no existe.' };
+      return { status: 'error', message: 'Necesitas al menos una cuenta activa para registrar el cierre.' };
     }
 
     const { data: existingClosing } = await supabase
       .from('daily_closings')
       .select('id')
       .eq('business_id', appContext.business.id)
-      .eq('account_id', sourceAccountId)
+      .eq('account_id', sourceAccount.id)
       .eq('closing_date', closingDate)
       .maybeSingle();
 
@@ -402,8 +400,8 @@ export async function createCashClosingAction(
     }
 
     const [priorEntriesResult, sameDayEntriesResult] = await Promise.all([
-      supabase.from('account_entries').select('type, amount').eq('business_id', appContext.business.id).eq('account_id', sourceAccountId).lt('entry_date', closingDate),
-      supabase.from('account_entries').select('type, amount').eq('business_id', appContext.business.id).eq('account_id', sourceAccountId).eq('entry_date', closingDate)
+      supabase.from('account_entries').select('type, amount').eq('business_id', appContext.business.id).eq('account_id', sourceAccount.id).lt('entry_date', closingDate),
+      supabase.from('account_entries').select('type, amount').eq('business_id', appContext.business.id).eq('account_id', sourceAccount.id).eq('entry_date', closingDate)
     ]);
 
     const priorEntries = priorEntriesResult.data ?? [];
@@ -420,7 +418,7 @@ export async function createCashClosingAction(
       .from('daily_closings')
       .insert({
         business_id: appContext.business.id,
-        account_id: sourceAccountId,
+        account_id: sourceAccount.id,
         closing_date: closingDate,
         opening_balance: toDecimalString(openingBalance),
         inflow_total: toDecimalString(metrics.inflowTotal),
@@ -441,7 +439,7 @@ export async function createCashClosingAction(
       account_id: item.accountId,
       entry_date: closingDate,
       type: 'income' as const,
-      concept: `Cierre de caja · ${sourceAccount.name}`,
+      concept: 'Cierre de caja · Tienda',
       amount: toDecimalString(item.amount),
       source_type: 'cash_closing',
       source_id: closingRow.id,
@@ -491,18 +489,18 @@ export async function createAccountTransferAction(
     const transferId = crypto.randomUUID();
     const concept = 'Transferencia interna';
     const payload = [
-      {
-        business_id: appContext.business.id,
-        account_id: sourceAccountId,
-        entry_date: transferDate,
-        type: 'expense' as const,
-        concept,
-        amount: toDecimalString(amount),
-        source_type: 'internal_transfer',
-        source_id: transferId,
-        notes: notes || null,
-        created_by: appContext.user.id
-      },
+  {
+    business_id: appContext.business.id,
+    account_id: sourceAccountId,
+    entry_date: transferDate,
+    type: 'expense' as const,
+    concept,
+    amount: toDecimalString(amount),
+    source_type: 'internal_transfer',
+    source_id: transferId,
+    notes: notes || null,
+    created_by: appContext.user.id
+  },
       {
         business_id: appContext.business.id,
         account_id: destinationAccountId,

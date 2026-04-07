@@ -305,7 +305,7 @@ export function AccountsWorkspace({ data, filters, currency, canManage }: { data
 
       <AccountSheet open={createAccountOpen} onClose={() => setCreateAccountOpen(false)} returnPath={buildBaseHref(filters)} />
       <AccountSheet open={Boolean(editingAccount)} onClose={() => setEditingAccount(null)} account={editingAccount} returnPath={buildBaseHref(filters)} />
-      <CashClosingSheet open={closingOpen} onClose={() => setClosingOpen(false)} catalogs={data.catalogs} presetSourceAccountId={selectedAccount?.id ?? filters.accountId} returnPath={buildBaseHref(filters)} />
+      <CashClosingSheet open={closingOpen} onClose={() => setClosingOpen(false)} catalogs={data.catalogs} returnPath={buildBaseHref(filters)} />
       <AccountTransferSheet open={transferOpen} onClose={() => setTransferOpen(false)} catalogs={data.catalogs} presetSourceAccountId={selectedAccount?.id ?? filters.accountId} returnPath={buildBaseHref(filters)} />
       <AccountEntrySheet open={entryOpen} onClose={() => setEntryOpen(false)} catalogs={data.catalogs} presetAccountId={selectedAccount?.id ?? filters.accountId} returnPath={buildBaseHref(filters)} />
     </div>

@@ -116,3 +116,20 @@ export function closingMetrics({
     closingBalance
   };
 }
+
+
+export function pickStoreCashAccount<T extends { id: string; name: string; type: Database['public']['Enums']['account_type']; is_primary?: boolean | null }>(accounts: T[]) {
+  const normalized = accounts.map((account) => ({
+    account,
+    lowered: account.name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+  }));
+
+  return (
+    normalized.find(({ account }) => account.type === 'cash')?.account ??
+    normalized.find(({ lowered }) => lowered.includes('efectivo'))?.account ??
+    normalized.find(({ lowered }) => lowered.includes('caja'))?.account ??
+    normalized.find(({ account }) => account.is_primary)?.account ??
+    accounts[0] ??
+    null
+  );
+}
