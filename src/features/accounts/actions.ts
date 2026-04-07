@@ -489,18 +489,18 @@ export async function createAccountTransferAction(
     const transferId = crypto.randomUUID();
     const concept = 'Transferencia interna';
     const payload = [
-  {
-    business_id: appContext.business.id,
-    account_id: sourceAccountId,
-    entry_date: transferDate,
-    type: 'expense' as const,
-    concept,
-    amount: toDecimalString(amount),
-    source_type: 'internal_transfer',
-    source_id: transferId,
-    notes: notes || null,
-    created_by: appContext.user.id
-  },
+      {
+        business_id: appContext.business.id,
+        account_id: sourceAccountId,
+        entry_date: transferDate,
+        type: 'expense' as const,
+        concept,
+        amount: toDecimalString(amount),
+        source_type: 'internal_transfer',
+        source_id: transferId,
+        notes: notes || null,
+        created_by: appContext.user.id
+      },
       {
         business_id: appContext.business.id,
         account_id: destinationAccountId,

@@ -9,7 +9,6 @@ import { Sheet } from '@/components/forms/sheet';
 import { useCloseOnSuccess, useSheetSessionKey } from '@/components/forms/sheet-session';
 import { Button } from '@/components/ui/button';
 import { createCashClosingAction } from '@/features/accounts/actions';
-import { pickStoreCashAccount } from '@/features/accounts/helpers';
 import { cashClosingFormInitialState, type CashCatalogs } from '@/features/accounts/types';
 import { formatCurrency } from '@/lib/utils';
 
@@ -48,15 +47,40 @@ export function CashClosingSheet({
   );
 }
 
+function normalizeName(value: string) {
+  return value.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+function getDefaultAllocationAccountIds(accounts: CashCatalogs['accounts']) {
+  const normalized = accounts.map((account) => ({
+    id: account.id,
+    type: account.type,
+    lowered: normalizeName(account.name)
+  }));
+
+  const preferred = [
+  normalized.find((account) => account.lowered.includes('sabadell'))?.id,
+  normalized.find((account) => account.lowered.includes('santander'))?.id,
+  normalized.find((account) => account.lowered.includes('efectivo'))?.id ??
+    normalized.find((account) => account.type === 'cash')?.id
+]
+  .filter((value): value is string => Boolean(value))
+  .filter((value, index, array) => array.indexOf(value) === index);
+
+  if (preferred.length >= 3) return preferred;
+
+  const fallbacks = normalized
+    .map((account) => account.id)
+    .filter((id) => !preferred.includes(id));
+
+  return [...preferred, ...fallbacks].slice(0, 3);
+}
+
 function CashClosingSheetForm({ onClose, catalogs, returnPath }: { onClose: () => void; catalogs: CashCatalogs; returnPath: string; }) {
   const router = useRouter();
   const [state, formAction, pending] = useActionState(createCashClosingAction, cashClosingFormInitialState);
-  const storeCashAccount = pickStoreCashAccount(catalogs.accounts);
-  const destinationOptions = catalogs.accounts.filter((account) => account.id !== storeCashAccount?.id);
-  const defaultRows = [
-    destinationOptions.find((account) => account.type === 'other')?.id ?? destinationOptions[0]?.id ?? '',
-    destinationOptions.find((account) => account.type === 'bank')?.id ?? destinationOptions[1]?.id ?? destinationOptions[0]?.id ?? ''
-  ].filter((value, index, array) => value && array.indexOf(value) === index);
+  const destinationOptions = catalogs.accounts;
+  const defaultRows = getDefaultAllocationAccountIds(destinationOptions);
 
   const [closingDate, setClosingDate] = useState(todayIso());
   const [total, setTotal] = useState('');
@@ -81,7 +105,7 @@ function CashClosingSheetForm({ onClose, catalogs, returnPath }: { onClose: () =
   }
 
   function addRow() {
-    setRows((current) => [...current, { id: crypto.randomUUID(), accountId: destinationOptions[0]?.id ?? '', amount: '' }]);
+    setRows((current) => [...current, { id: crypto.randomUUID(), accountId: '', amount: '' }]);
   }
 
   function removeRow(id: string) {
@@ -113,17 +137,20 @@ function CashClosingSheetForm({ onClose, catalogs, returnPath }: { onClose: () =
         <input className={inputClassName(Boolean(state.fieldErrors?.total))} type="number" step="0.01" min="0.01" name="total" value={total} onChange={(event) => setTotal(event.target.value)} placeholder="0,00" />
       </Field>
 
-      <Field label="Reparto del cierre" error={state.fieldErrors?.allocations} hint="Reparte el total del día entre efectivo y cuentas bancarias.">
+      <Field label="Reparto del cierre" error={state.fieldErrors?.allocations} hint="Reparte el total del día entre Sabadell, Santander, Efectivo u otras cuentas que uses.">
         <div className="grid gap-3 rounded-[24px] border border-[rgba(123,136,95,0.14)] bg-white/66 p-4">
           {rows.map((row) => (
             <div key={row.id} className="grid gap-3 rounded-[22px] border border-[rgba(123,136,95,0.12)] bg-white/90 p-3 md:grid-cols-[minmax(0,1fr)_140px_auto] md:items-center">
               <select className={inputClassName()} name="allocationAccountId" value={row.accountId} onChange={(event) => updateRow(row.id, { accountId: event.target.value })}>
                 <option value="">Cuenta destino</option>
-                {destinationOptions.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.name}
-                  </option>
-                ))}
+                {destinationOptions.map((account) => {
+                  const alreadySelected = rows.some((item) => item.id !== row.id && item.accountId === account.id);
+                  return (
+                    <option key={account.id} value={account.id} disabled={alreadySelected}>
+                      {account.name}
+                    </option>
+                  );
+                })}
               </select>
               <div className="relative">
                 <input className={inputClassName()} type="number" step="0.01" min="0.01" name="allocationAmount" value={row.amount} onChange={(event) => updateRow(row.id, { amount: event.target.value })} placeholder="0,00" />
@@ -143,7 +170,7 @@ function CashClosingSheetForm({ onClose, catalogs, returnPath }: { onClose: () =
           </div>
 
           <div className="flex justify-start">
-            <Button variant="secondary" onClick={addRow}><Plus className="mr-2 h-4 w-4" />Añadir banco o efectivo</Button>
+            <Button variant="secondary" onClick={addRow}><Plus className="mr-2 h-4 w-4" />Añadir otra cuenta</Button>
           </div>
         </div>
       </Field>
