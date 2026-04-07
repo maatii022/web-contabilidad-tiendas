@@ -532,6 +532,12 @@ export type Database = {
         };
         Returns: boolean;
       };
+      refresh_purchase_invoice_schedule: {
+        Args: {
+          p_invoice_id: string;
+        };
+        Returns: undefined;
+      };
       storage_business_id: {
         Args: {
           path: string;
