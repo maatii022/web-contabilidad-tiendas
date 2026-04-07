@@ -1,13 +1,14 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarClock, CheckCircle2, FileText, Pencil, Plus, ReceiptText, Search, Trash2 } from 'lucide-react';
+import { CalendarClock, FileText, Pencil, Plus, ReceiptText, Search, Trash2 } from 'lucide-react';
 
 import { InvoicePaymentSheet } from '@/components/forms/invoice-payment-sheet';
 import { InvoiceSheet } from '@/components/forms/invoice-sheet';
+import { QuickSettleButton } from '@/components/invoices/quick-settle-button';
 import { StatusPill } from '@/components/dashboard/status-pill';
 import { Button, buttonClassName } from '@/components/ui/button';
-import { deleteInvoiceAction, deleteInvoicePaymentAction, quickSettleInvoiceAction } from '@/features/invoices/actions';
+import { deleteInvoiceAction, deleteInvoicePaymentAction } from '@/features/invoices/actions';
 import type {
   InvoiceCatalogs,
   InvoiceFilters,
@@ -248,7 +249,6 @@ export function InvoicesWorkspace({
               const progress = invoice.total > 0 ? Math.min((invoice.paidAmount / invoice.total) * 100, 100) : 0;
               const isHighlighted = invoice.id === filters.highlightedInvoiceId;
               const installmentPaymentMap = buildInstallmentPaymentMap(invoice);
-              const singleInstallment = invoice.installments.length === 1 ? invoice.installments[0] : null;
 
               return (
                 <article
@@ -286,16 +286,6 @@ export function InvoicesWorkspace({
                       <p className="text-2xl font-semibold tracking-[-0.04em] text-[var(--foreground)]">{formatCurrency(invoice.pendingAmount, currency)}</p>
                       {canManage ? (
                         <div className="flex flex-wrap items-center gap-2">
-                          {singleInstallment && singleInstallment.pendingAmount > 0.009 && invoice.status !== 'cancelled' ? (
-                            <form>
-                              <input type="hidden" name="invoiceId" value={invoice.id} />
-                              <input type="hidden" name="installmentId" value={singleInstallment.id} />
-                              <input type="hidden" name="returnPath" value="/facturas" />
-                              <Button type="submit" formAction={quickSettleInvoiceAction}>
-                                <CheckCircle2 className="mr-2 h-4 w-4" />Pagada
-                              </Button>
-                            </form>
-                          ) : null}
                           <Button variant="secondary" onClick={() => setEditingInvoice(invoice)}>
                             <Pencil className="mr-2 h-4 w-4" />Editar
                           </Button>
@@ -328,14 +318,12 @@ export function InvoicesWorkspace({
                               </div>
                               <div className="flex items-center gap-2">
                                 {canManage && installment.pendingAmount > 0.009 && invoice.status !== 'cancelled' ? (
-                                  <form>
-                                    <input type="hidden" name="invoiceId" value={invoice.id} />
-                                    <input type="hidden" name="installmentId" value={installment.id} />
-                                    <input type="hidden" name="returnPath" value="/facturas" />
-                                    <Button type="submit" formAction={quickSettleInvoiceAction} className="h-9 px-4 text-xs">
-                                      Pagado
-                                    </Button>
-                                  </form>
+                                  <QuickSettleButton
+                                    invoiceId={invoice.id}
+                                    installmentId={installment.id}
+                                    returnPath="/facturas"
+                                    className="h-9 px-4 text-xs"
+                                  />
                                 ) : null}
                                 {canManage && linkedPayment ? (
                                   <Button

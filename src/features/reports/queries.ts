@@ -104,6 +104,12 @@ type InvoiceRow = Pick<
   'status' | 'total' | 'due_date'
 >;
 
+type PaymentRow = Pick<
+  Database['public']['Tables']['purchase_invoice_payments']['Row'],
+  'payment_date' | 'amount'
+>;
+
+
 type MonthSeasonality = {
   month: number;
   label: string;
@@ -243,7 +249,7 @@ export async function getAnalysisSnapshot({
   const previousMonthPrefix = `${previousDate.getUTCFullYear()}-${String(previousDate.getUTCMonth() + 1).padStart(2, '0')}`;
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date());
 
-  const [expensesResult, invoicesResult, categoriesResult, accountsResult, entriesResult] = await Promise.all([
+  const [expensesResult, invoicesResult, categoriesResult, accountsResult, entriesResult, invoicePaymentsResult] = await Promise.all([
     supabase.from('expenses').select('expense_date, total_amount, category_id').eq('business_id', businessId).order('expense_date', { ascending: true }),
     supabase.from('purchase_invoices').select('status, total, due_date').eq('business_id', businessId),
     supabase.from('expense_categories').select('id, name, color').eq('business_id', businessId),
@@ -254,12 +260,14 @@ export async function getAnalysisSnapshot({
       .eq('is_active', true)
       .order('is_primary', { ascending: false })
       .order('name', { ascending: true }),
-    supabase.from('account_entries').select('account_id, entry_date, type, amount').eq('business_id', businessId)
+    supabase.from('account_entries').select('account_id, entry_date, type, amount').eq('business_id', businessId),
+    supabase.from('purchase_invoice_payments').select('payment_date, amount').eq('business_id', businessId).order('payment_date', { ascending: true })
   ]);
 
   const expenseRows = (expensesResult.data ?? []) as ExpenseRow[];
   const entryRows = (entriesResult.data ?? []) as EntryRow[];
   const invoiceRows = (invoicesResult.data ?? []) as InvoiceRow[];
+  const invoicePaymentRows = (invoicePaymentsResult.data ?? []) as PaymentRow[];
   const categoryMap = new Map((categoriesResult.data ?? []).map((item) => [item.id, item]));
 
   const monthlyMap = new Map<string, AnalysisChartPoint>();
@@ -336,6 +344,46 @@ export async function getAnalysisSnapshot({
     }
   }
 
+  for (const payment of invoicePaymentRows) {
+    const value = parseMoney(payment.amount);
+    const year = Number(payment.payment_date.slice(0, 4));
+    const month = Number(payment.payment_date.slice(5, 7));
+    const day = Number(payment.payment_date.slice(8, 10));
+    const annualKey = `${year}-${String(month).padStart(2, '0')}`;
+    const dailyKey = `${annualKey}-${String(day).padStart(2, '0')}`;
+    yearMonthKeys.add(annualKey);
+
+    addToPoint(
+      annualMap,
+      annualKey,
+      (point) => {
+        point.expenses = Number((point.expenses + value).toFixed(2));
+        point.profit = Number((point.inflow - point.expenses).toFixed(2));
+      },
+      () => ({ key: annualKey, label: formatMonthLabel(year, month), expenses: 0, inflow: 0, profit: 0 })
+    );
+
+    if (monthlyMap.has(dailyKey)) {
+      addToPoint(
+        monthlyMap,
+        dailyKey,
+        (point) => {
+          point.expenses = Number((point.expenses + value).toFixed(2));
+          point.profit = Number((point.inflow - point.expenses).toFixed(2));
+        },
+        () => ({ key: dailyKey, label: formatDayLabel(year, month, day), expenses: 0, inflow: 0, profit: 0 })
+      );
+    }
+
+    const monthPrefix = payment.payment_date.slice(0, 7);
+    if (monthPrefix === currentMonthPrefix) {
+      monthlyExpense += value;
+    }
+    if (monthPrefix === previousMonthPrefix) {
+      previousMonthExpense += value;
+    }
+  }
+
   let currentMonthInflow = 0;
   let currentMonthOutflow = 0;
 
@@ -385,6 +433,20 @@ export async function getAnalysisSnapshot({
   for (const expense of expenseRows) {
     const key = expense.expense_date.slice(0, 7);
     const value = parseMoney(expense.total_amount);
+    addToPoint(
+      historicalMap,
+      key,
+      (point) => {
+        point.expenses = Number((point.expenses + value).toFixed(2));
+        point.profit = Number((point.inflow - point.expenses).toFixed(2));
+      },
+      () => ({ key, label: key, expenses: 0, inflow: 0, profit: 0 })
+    );
+  }
+
+  for (const payment of invoicePaymentRows) {
+    const key = payment.payment_date.slice(0, 7);
+    const value = parseMoney(payment.amount);
     addToPoint(
       historicalMap,
       key,

@@ -73,6 +73,18 @@ function ChartPill({
   );
 }
 
+function getViewportConfig(view: ViewMode) {
+  if (view === 'annual') {
+    return { columnWidth: 52, barWidth: 26, minWidth: 720 };
+  }
+
+  if (view === 'monthly') {
+    return { columnWidth: 34, barWidth: 16, minWidth: 920 };
+  }
+
+  return { columnWidth: 42, barWidth: 20, minWidth: 860 };
+}
+
 export function InteractiveAnalysisCharts({
   chart,
   currency
@@ -104,6 +116,8 @@ export function InteractiveAnalysisCharts({
   }, null);
   const peakValue = peakPoint ? getMetricValue(peakPoint, metric) : 0;
   const variation = selectedIndex > 0 ? selectedValue - values[selectedIndex - 1] : 0;
+  const { columnWidth, barWidth, minWidth } = getViewportConfig(view);
+  const chartWidth = Math.max(series.length * columnWidth + 48, minWidth);
 
   return (
     <section className="surface-card min-w-0 overflow-hidden rounded-[30px] p-5 md:p-6">
@@ -165,44 +179,42 @@ export function InteractiveAnalysisCharts({
         </div>
 
         <div className="mt-6 overflow-x-auto pb-2 no-scrollbar">
-          <div className="relative px-2" style={{ minWidth: `${Math.max(series.length * 42 + 120, 760)}px` }}>
+          <div className="relative px-3" style={{ minWidth: `${chartWidth}px` }}>
             <div className="relative h-[300px]">
-              {isSignedMetric ? <div className="pointer-events-none absolute inset-x-0 top-1/2 h-px bg-[rgba(123,136,95,0.16)]" /> : <div className="pointer-events-none absolute inset-x-0 bottom-11 h-px bg-[rgba(123,136,95,0.08)]" />}
+              {isSignedMetric ? (
+                <div className="pointer-events-none absolute inset-x-0 top-1/2 h-px bg-[rgba(123,136,95,0.16)]" />
+              ) : (
+                <div className="pointer-events-none absolute inset-x-0 bottom-12 h-px bg-[rgba(123,136,95,0.08)]" />
+              )}
 
-              <div className="absolute inset-x-0 top-0 bottom-11 flex items-end gap-3">
+              <div className="absolute inset-x-0 top-0 bottom-12 flex items-end justify-between gap-0">
                 {series.map((point, index) => {
                   const value = getMetricValue(point, metric);
                   const isActive = index === selectedIndex;
                   const maxHeight = isSignedMetric ? 34 : 72;
                   const scaledHeight = Math.max((Math.abs(value) / maxAbsValue) * maxHeight, Math.abs(value) > 0 ? 6 : 2);
                   const color = metricTone(metric, value < 0);
-                  const bubbleClass = cn(
-                    'absolute left-1/2 z-10 -translate-x-1/2 rounded-full border border-[rgba(123,136,95,0.16)] bg-white px-3 py-1 text-xs font-semibold tracking-[-0.02em] shadow-[0_10px_18px_rgba(60,70,49,0.08)] transition-all duration-300 ease-out whitespace-nowrap',
-                    isActive ? 'opacity-100' : 'pointer-events-none opacity-0'
-                  );
+                  const tooltipStyle =
+                    value < 0 && isSignedMetric
+                      ? { top: `calc(50% + ${scaledHeight}% + 14px)` }
+                      : isSignedMetric
+                        ? { bottom: `calc(50% + ${scaledHeight}% + 14px)` }
+                        : { bottom: `calc(12px + ${scaledHeight}% + 14px)` };
 
                   return (
                     <button
                       key={point.key}
                       type="button"
                       onClick={() => setSelectedIndex(index)}
-                      className={cn(
-                        'group relative flex h-full shrink-0 flex-col items-center justify-end text-center transition-all duration-300 ease-out',
-                        isActive ? 'w-[92px]' : 'w-[28px]'
-                      )}
+                      className="group relative flex h-full shrink-0 flex-col items-center justify-end text-center"
+                      style={{ width: `${columnWidth}px` }}
                       title={`${point.label}: ${formatCurrency(value, currency)}`}
                     >
                       <div className="relative h-full w-full overflow-visible">
                         {isActive ? (
                           <div
-                            className={bubbleClass}
-                            style={
-                              value < 0 && isSignedMetric
-                                ? { top: `calc(50% + ${scaledHeight}% + 12px)` }
-                                : isSignedMetric
-                                  ? { bottom: `calc(50% + ${scaledHeight}% + 12px)` }
-                                  : { bottom: `calc(11px + ${scaledHeight}% + 12px)` }
-                            }
+                            className="absolute left-1/2 z-10 -translate-x-1/2 rounded-full border border-[rgba(123,136,95,0.16)] bg-white px-3 py-1 text-xs font-semibold tracking-[-0.02em] shadow-[0_10px_18px_rgba(60,70,49,0.08)] whitespace-nowrap"
+                            style={tooltipStyle}
                           >
                             {formatCurrency(value, currency)}
                           </div>
@@ -212,27 +224,33 @@ export function InteractiveAnalysisCharts({
                           value >= 0 ? (
                             <div
                               className={cn(
-                                'absolute bottom-1/2 left-1/2 -translate-x-1/2 rounded-t-[18px] transition-all duration-300 ease-out',
-                                isActive ? 'w-8 shadow-[0_12px_20px_rgba(83,99,65,0.15)]' : 'w-4 opacity-85 group-hover:opacity-100'
+                                'absolute bottom-1/2 left-1/2 -translate-x-1/2 rounded-t-[8px] transition-all duration-150 ease-out',
+                                isActive
+                                  ? 'ring-2 ring-[rgba(83,99,65,0.18)] shadow-[0_10px_18px_rgba(83,99,65,0.14)]'
+                                  : 'opacity-90 group-hover:opacity-100'
                               )}
-                              style={{ height: `${scaledHeight}%`, background: color }}
+                              style={{ height: `${scaledHeight}%`, width: `${barWidth}px`, background: color }}
                             />
                           ) : (
                             <div
                               className={cn(
-                                'absolute top-1/2 left-1/2 -translate-x-1/2 rounded-b-[18px] transition-all duration-300 ease-out',
-                                isActive ? 'w-8 shadow-[0_12px_20px_rgba(83,99,65,0.15)]' : 'w-4 opacity-85 group-hover:opacity-100'
+                                'absolute top-1/2 left-1/2 -translate-x-1/2 rounded-b-[8px] transition-all duration-150 ease-out',
+                                isActive
+                                  ? 'ring-2 ring-[rgba(155,91,83,0.18)] shadow-[0_10px_18px_rgba(155,91,83,0.12)]'
+                                  : 'opacity-90 group-hover:opacity-100'
                               )}
-                              style={{ height: `${scaledHeight}%`, background: color }}
+                              style={{ height: `${scaledHeight}%`, width: `${barWidth}px`, background: color }}
                             />
                           )
                         ) : (
                           <div
                             className={cn(
-                              'absolute bottom-11 left-1/2 -translate-x-1/2 rounded-t-[18px] transition-all duration-300 ease-out',
-                              isActive ? 'w-8 shadow-[0_12px_20px_rgba(83,99,65,0.15)]' : 'w-4 opacity-85 group-hover:opacity-100'
+                              'absolute bottom-12 left-1/2 -translate-x-1/2 rounded-t-[8px] transition-all duration-150 ease-out',
+                              isActive
+                                ? 'ring-2 ring-[rgba(175,123,53,0.18)] shadow-[0_10px_18px_rgba(175,123,53,0.12)]'
+                                : 'opacity-90 group-hover:opacity-100'
                             )}
-                            style={{ height: `${scaledHeight}%`, background: color }}
+                            style={{ height: `${scaledHeight}%`, width: `${barWidth}px`, background: color }}
                           />
                         )}
                       </div>
